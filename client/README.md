@@ -1,6 +1,6 @@
 # ESS Front-end Next.js
 
-This is the Front-end base project in Next.js for the Software and Systems Engineering discipline, offered by the Informatics Center (CIn) of the Federal University of Pernambuco (UFPE).
+This is the front-end of the project in Next.js for the Ecole des Sables project.
 
 ## Table of Contents
 
