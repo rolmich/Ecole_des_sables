@@ -1,0 +1,43 @@
+{
+  "villages": {
+    "A": {
+      "amenities_type": "shared",
+      "bungalows": {
+        "A2K": {"type": "A"},
+        "A2": {"type": "A"},
+        "A3": {"type": "A"},
+        "A4": {"type": "A"},
+        "A5": {"type": "B"},
+        "A6": {"type": "A"},
+        "A7": {"type": "A"},
+        "A8": {"type": "A"}
+      }
+    },
+    "B": {
+      "amenities_type": "shared",
+      "bungalows": {
+        "B1": {"type": "B"},
+        "B2": {"type": "A"},
+        "B3": {"type": "A"},
+        "B4": {"type": "A"},
+        "B5": {"type": "B"},
+        "B6": {"type": "A"},
+        "B7": {"type": "A"},
+        "B8": {"type": "A"}
+      }
+    },
+    "C": {
+      "amenities_type": "private",
+      "bungalows": {
+        "C1": {"type": "A"},
+        "C2": {"type": "B"},
+        "C3": {"type": "A"},
+        "C4": {"type": "A"},
+        "C5": {"type": "B"},
+        "C6": {"type": "A"},
+        "C7": {"type": "A"},
+        "C8": {"type": "A"}
+      }
+    }
+  }
+}
