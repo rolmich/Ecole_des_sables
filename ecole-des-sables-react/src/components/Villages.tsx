@@ -104,6 +104,21 @@ const Villages: React.FC = () => {
     return { type, occupancy: `${occupied}/${total} bungalows occupés` };
   };
 
+  const getLitInfo = (village: 'A' | 'B' | 'C') => {
+    console.log(getBungalowsByVillage("A"));
+    let bungalowInfo = getBungalowsByVillage(village);
+    let totalCapacity = bungalowInfo.reduce((sum, bungalow) => {
+      return sum + bungalow.capacity;
+    }, 0);
+
+    let totalOcupied = bungalowInfo.reduce((sum, bungalow) => {
+      const participantsInBungalow = filteredParticipants.filter(p => p.assignedBungalowId === bungalow.id);
+      return sum + participantsInBungalow.length;
+    }, 0);
+
+    return `${totalOcupied}/${totalCapacity} lits occupés`;
+  }
+  
   const getBungalowOccupancy = (bungalow: Bungalow) => {
     // Compter les participants assignés à ce bungalow durant la période filtrée
     const participantsInBungalow = filteredParticipants.filter(p => p.assignedBungalowId === bungalow.id);
@@ -353,6 +368,7 @@ const Villages: React.FC = () => {
         {(['A', 'B', 'C'] as const).map((village) => {
           const villageBungalows = getBungalowsByVillage(village);
           const villageInfo = getVillageInfo(village);
+          const litInfo = getLitInfo(village);
           
           return (
             <div key={village} className="village-section">
@@ -361,6 +377,7 @@ const Villages: React.FC = () => {
                 <div className="village-info">
                   <span className="village-type">{villageInfo.type}</span>
                   <span className="occupancy">{villageInfo.occupancy}</span>
+                  <span className="occupancy">{litInfo}</span>
                 </div>
               </div>
               <div className={`bungalows-grid ${viewMode}`}>
