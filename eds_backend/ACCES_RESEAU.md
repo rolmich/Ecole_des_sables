@@ -194,3 +194,4 @@ Remplacez `192.168.1.100` par l'IP réelle de votre machine.
 5. 🔒 N'oubliez pas de sécuriser pour la production !
 
 
+

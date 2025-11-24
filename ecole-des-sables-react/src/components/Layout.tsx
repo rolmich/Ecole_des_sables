@@ -20,11 +20,13 @@ const Layout: React.FC = () => {
 
   const menuItems = [
     { path: '/dashboard', label: 'Tableau de Bord', icon: 'fas fa-tachometer-alt' },
-    { path: '/stages', label: 'Stages', icon: 'fas fa-calendar-alt' },
+    { path: '/stages', label: 'Événements', icon: 'fas fa-calendar-alt' },
     { path: '/participants', label: 'Participants', icon: 'fas fa-users' },
     { path: '/villages', label: 'Villages', icon: 'fas fa-home' },
     { path: '/assignments', label: 'Assignations', icon: 'fas fa-bed' },
     { path: '/reports', label: 'Rapports', icon: 'fas fa-chart-bar' },
+    { path: '/languages', label: 'Langues', icon: 'fas fa-language' },
+    { path: '/history', label: 'Historique', icon: 'fas fa-history' },
     { path: '/users', label: 'Utilisateurs', icon: 'fas fa-user-cog' }
   ];
 

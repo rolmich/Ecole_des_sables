@@ -7,3 +7,4 @@ class ParticipantsConfig(AppConfig):
     verbose_name = 'Participants et Stages'
 
 
+

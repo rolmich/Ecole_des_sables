@@ -1,7 +1,9 @@
 import { User } from '../types/User';
-import { Participant } from '../types/Participant';
+import { Participant, ParticipantCreate } from '../types/Participant';
 import { Stage } from '../types/Stage';
 import { Bungalow } from '../types/Bungalow';
+import { ActivityLog, ActivityLogStats } from '../types/ActivityLog';
+import { ParticipantStage, ParticipantStageCreate, ParticipantStageUpdate, StageParticipantsStats } from '../types/ParticipantStage';
 import apiService from './api';
 
 class DataService {
@@ -355,9 +357,11 @@ class DataService {
       name: 'Danse Contemporaine Avancée',
       startDate: '2025-09-15',
       endDate: '2025-12-15',
+      eventType: 'stage',
       instructor: 'Germaine Acogny',
       capacity: 20,
       currentParticipants: 18,
+      musiciansCount: 2,
       constraints: ['Village A uniquement', 'Pas de mixité']
     },
     {
@@ -365,9 +369,11 @@ class DataService {
       name: 'Formation Professionnelle',
       startDate: '2025-10-01',
       endDate: '2025-12-31',
+      eventType: 'stage',
       instructor: 'Patrick Acogny',
       capacity: 15,
       currentParticipants: 12,
+      musiciansCount: 2,
       constraints: ['Village B uniquement']
     },
     {
@@ -375,9 +381,11 @@ class DataService {
       name: 'Technique de Base',
       startDate: '2025-10-15',
       endDate: '2026-01-15',
+      eventType: 'stage',
       instructor: 'Marie Dubois',
       capacity: 30,
       currentParticipants: 25,
+      musiciansCount: 1,
       constraints: ['Tous villages']
     },
     // Stages À Venir - Dates futures 2026
@@ -386,9 +394,11 @@ class DataService {
       name: 'Danse Africaine Moderne',
       startDate: '2026-01-15',
       endDate: '2026-03-15',
+      eventType: 'stage',
       instructor: 'Fatou Cissé',
       capacity: 18,
       currentParticipants: 0,
+      musiciansCount: 2,
       constraints: ['Village A uniquement']
     },
     {
@@ -396,9 +406,11 @@ class DataService {
       name: 'Perfectionnement Technique',
       startDate: '2026-02-01',
       endDate: '2026-04-01',
+      eventType: 'stage',
       instructor: 'Amadou Ba',
       capacity: 22,
       currentParticipants: 0,
+      musiciansCount: 1,
       constraints: ['Village B uniquement', 'Niveau avancé']
     },
     {
@@ -406,9 +418,11 @@ class DataService {
       name: 'Création Chorégraphique',
       startDate: '2026-03-01',
       endDate: '2026-05-01',
+      eventType: 'resident',
       instructor: 'Khadija Ndiaye',
       capacity: 12,
       currentParticipants: 0,
+      musiciansCount: 3,
       constraints: ['Village C uniquement', 'Projet final']
     },
     // Stages Terminés
@@ -417,9 +431,11 @@ class DataService {
       name: 'Danse Traditionnelle',
       startDate: '2023-12-01',
       endDate: '2023-12-14',
+      eventType: 'stage',
       instructor: 'Aïcha Diallo',
       capacity: 25,
       currentParticipants: 25,
+      musiciansCount: 2,
       constraints: ['Tous villages']
     },
     {
@@ -427,9 +443,11 @@ class DataService {
       name: 'Initiation à la Danse',
       startDate: '2023-11-15',
       endDate: '2023-11-30',
+      eventType: 'stage',
       instructor: 'Moussa Traoré',
       capacity: 20,
       currentParticipants: 20,
+      musiciansCount: 1,
       constraints: ['Débutants uniquement']
     },
     {
@@ -437,9 +455,11 @@ class DataService {
       name: 'Stage Intensif',
       startDate: '2023-10-01',
       endDate: '2023-10-15',
+      eventType: 'stage',
       instructor: 'Ibrahima Sow',
       capacity: 15,
       currentParticipants: 15,
+      musiciansCount: 1,
       constraints: ['Village A uniquement', 'Stage intensif']
     },
     {
@@ -447,9 +467,11 @@ class DataService {
       name: 'Masterclass Internationale',
       startDate: '2023-09-01',
       endDate: '2023-09-10',
+      eventType: 'autres',
       instructor: 'Guest International',
       capacity: 30,
       currentParticipants: 30,
+      musiciansCount: 0,
       constraints: ['Tous niveaux', 'Langue française']
     }
   ];
@@ -877,6 +899,14 @@ class DataService {
     }
   }
 
+  async getStageById(id: number): Promise<Stage> {
+    try {
+      return await apiService.getStageDetail(id);
+    } catch (error: any) {
+      throw new Error(error.message || 'Erreur lors de la récupération du stage');
+    }
+  }
+
   // Méthodes pour les participants (maintenant depuis l'API)
   async getParticipants(params?: { stageIds?: number[]; status?: string; search?: string; assigned?: boolean }): Promise<Participant[]> {
     try {
@@ -1023,6 +1053,123 @@ class DataService {
       return await apiService.unassignParticipant(participantId);
     } catch (error: any) {
       console.error('[DataService] unassignParticipant error:', error);
+      throw error;
+    }
+  }
+
+  // ==================== ACTIVITY LOG METHODS ====================
+
+  async getActivityLogs(params?: {
+    user_id?: number;
+    action_type?: string;
+    model_name?: string;
+    search?: string;
+  }): Promise<ActivityLog[]> {
+    try {
+      console.log('[DataService] getActivityLogs:', params);
+      return await apiService.getActivityLogs(params);
+    } catch (error: any) {
+      console.error('[DataService] getActivityLogs error:', error);
+      throw error;
+    }
+  }
+
+  async getActivityLogStats(): Promise<ActivityLogStats> {
+    try {
+      console.log('[DataService] getActivityLogStats');
+      return await apiService.getActivityLogStats();
+    } catch (error: any) {
+      console.error('[DataService] getActivityLogStats error:', error);
+      throw error;
+    }
+  }
+
+  // ==================== PARTICIPANT STAGE METHODS (inscriptions) ====================
+
+  async getStageParticipants(stageId: number): Promise<ParticipantStage[]> {
+    try {
+      console.log('[DataService] getStageParticipants:', stageId);
+      const response = await apiService.getStageParticipants(stageId);
+      // Gérer la pagination si l'API retourne un objet {results: [...]}
+      return Array.isArray(response) ? response : (response.results || []);
+    } catch (error: any) {
+      console.error('[DataService] getStageParticipants error:', error);
+      throw error;
+    }
+  }
+
+  async getStageParticipantsStats(stageId: number): Promise<StageParticipantsStats> {
+    try {
+      console.log('[DataService] getStageParticipantsStats:', stageId);
+      return await apiService.getStageParticipantsStats(stageId);
+    } catch (error: any) {
+      console.error('[DataService] getStageParticipantsStats error:', error);
+      throw error;
+    }
+  }
+
+  async addParticipantToStage(data: ParticipantStageCreate): Promise<ParticipantStage> {
+    try {
+      console.log('[DataService] addParticipantToStage:', data);
+      return await apiService.addParticipantToStage(data);
+    } catch (error: any) {
+      console.error('[DataService] addParticipantToStage error:', error);
+      throw error;
+    }
+  }
+
+  async updateParticipantStage(id: number, data: ParticipantStageUpdate): Promise<ParticipantStage> {
+    try {
+      console.log('[DataService] updateParticipantStage:', id, data);
+      return await apiService.updateParticipantStage(id, data);
+    } catch (error: any) {
+      console.error('[DataService] updateParticipantStage error:', error);
+      throw error;
+    }
+  }
+
+  async removeParticipantFromStage(id: number): Promise<void> {
+    try {
+      console.log('[DataService] removeParticipantFromStage:', id);
+      await apiService.removeParticipantFromStage(id);
+    } catch (error: any) {
+      console.error('[DataService] removeParticipantFromStage error:', error);
+      throw error;
+    }
+  }
+
+  // ==================== PARTICIPANT DIRECTORY METHODS (sans événement) ====================
+
+  async getParticipantsDirectory(): Promise<Participant[]> {
+    try {
+      console.log('[DataService] getParticipantsDirectory');
+      const response = await apiService.getParticipantsDirectory();
+      // Gérer la pagination si l'API retourne un objet {results: [...]}
+      return Array.isArray(response) ? response : (response.results || []);
+    } catch (error: any) {
+      console.error('[DataService] getParticipantsDirectory error:', error);
+      throw error;
+    }
+  }
+
+  async createParticipantSimple(data: ParticipantCreate): Promise<Participant> {
+    try {
+      console.log('[DataService] createParticipantSimple:', data);
+      return await apiService.createParticipantSimple(data);
+    } catch (error: any) {
+      console.error('[DataService] createParticipantSimple error:', error);
+      throw error;
+    }
+  }
+
+  async searchParticipants(query: string, excludeStageId?: number): Promise<Participant[]> {
+    try {
+      console.log('[DataService] searchParticipants:', query, excludeStageId);
+      const response = await apiService.searchParticipants(query, excludeStageId);
+      // Gérer la pagination si l'API retourne un objet {results: [...]}
+      return Array.isArray(response) ? response : (response.results || []);
+    } catch (error: any) {
+      console.error('[DataService] searchParticipants error:', error);
       throw error;
     }
   }

@@ -1,38 +1,44 @@
 import React, { useState, useEffect } from 'react';
 import { Bungalow } from '../types/Bungalow';
-import { Participant } from '../types/Participant';
 import { Stage } from '../types/Stage';
+import { ParticipantStage } from '../types/ParticipantStage';
 import dataService from '../services/dataService';
+import apiService from '../services/api';
 
 const Villages: React.FC = () => {
   const [bungalows, setBungalows] = useState<Bungalow[]>([]);
-  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [registrations, setRegistrations] = useState<ParticipantStage[]>([]);
+  const [assignedRegistrations, setAssignedRegistrations] = useState<ParticipantStage[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
-  const [filteredParticipants, setFilteredParticipants] = useState<Participant[]>([]);
-  const [selectedParticipant, setSelectedParticipant] = useState<number | null>(null);
+  const [selectedRegistration, setSelectedRegistration] = useState<number | null>(null);
   const [selectedBungalow, setSelectedBungalow] = useState<number | null>(null);
   const [selectedBed, setSelectedBed] = useState<string>('');
-  const [selectedStage, setSelectedStage] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [alert, setAlert] = useState<{type: 'success' | 'error' | 'warning', message: string} | null>(null);
 
+  // Charger les données initiales
   useEffect(() => {
     const loadData = async () => {
+      setLoading(true);
       try {
-        const [participantsData, bungalowsData, stagesData] = await Promise.all([
-          dataService.getParticipants(),
+        const [unassignedData, bungalowsData, stagesData] = await Promise.all([
+          apiService.getUnassignedRegistrations(),
           dataService.getBungalows(),
           dataService.getStages()
         ]);
+
+        const regData = Array.isArray(unassignedData) ? unassignedData : (unassignedData.registrations || unassignedData.results || []);
+        setRegistrations(regData);
         setBungalows(bungalowsData);
-        setParticipants(participantsData);
         setStages(stagesData);
-        
+
         // Initialiser avec la date du premier stage si disponible
         if (stagesData.length > 0) {
-          const firstStage = stagesData.find(s => s.startDate && s.endDate);
+          const firstStage = stagesData.find((s: Stage) => s.startDate && s.endDate);
           if (firstStage) {
             setStartDate(firstStage.startDate);
             setEndDate(firstStage.endDate);
@@ -40,40 +46,40 @@ const Villages: React.FC = () => {
         }
       } catch (error) {
         console.error('Erreur lors du chargement des données:', error);
+      } finally {
+        setLoading(false);
       }
     };
     loadData();
   }, []);
 
-  // Filtrer les participants selon la période
+  // Recharger les inscriptions quand les dates changent
   useEffect(() => {
-    if (!startDate || !endDate) {
-      setFilteredParticipants(participants);
-      return;
+    if (startDate && endDate) {
+      reloadData();
     }
+  }, [startDate, endDate]);
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+  const reloadData = async () => {
+    try {
+      const params = startDate && endDate ? { startDate, endDate } : undefined;
+      const [unassignedData, bungalowsData] = await Promise.all([
+        apiService.getUnassignedRegistrations(params),
+        dataService.getBungalows()
+      ]);
 
-    // Filtrer les participants assignés durant la période
-    const participantsInPeriod = participants.filter(p => {
-      if (!p.assignedBungalowId) return false;
-      
-      // Vérifier si le participant a un stage durant cette période
-      return p.stageIds?.some(stageId => {
-        const stage = stages.find(s => s.id === stageId);
-        if (!stage || !stage.startDate || !stage.endDate) return false;
-        
-        const stageStart = new Date(stage.startDate);
-        const stageEnd = new Date(stage.endDate);
-        
-        // Vérifier si les périodes se chevauchent
-        return stageStart <= end && stageEnd >= start;
-      });
-    });
+      const regData = Array.isArray(unassignedData) ? unassignedData : (unassignedData.registrations || unassignedData.results || []);
+      setRegistrations(regData);
+      setBungalows(bungalowsData);
+    } catch (error) {
+      console.error('Erreur lors du rechargement des données:', error);
+    }
+  };
 
-    setFilteredParticipants(participantsInPeriod);
-  }, [startDate, endDate, participants, stages]);
+  const showAlertMessage = (type: 'success' | 'error' | 'warning', message: string) => {
+    setAlert({ type, message });
+    setTimeout(() => setAlert(null), 4000);
+  };
 
   const getBungalowsByVillage = (village: 'A' | 'B' | 'C') => {
     return bungalows.filter(b => b.village === village);
@@ -81,15 +87,15 @@ const Villages: React.FC = () => {
 
   const getVillageInfo = (village: 'A' | 'B' | 'C') => {
     const villageBungalows = getBungalowsByVillage(village);
-    
-    // Compter les bungalows occupés durant la période
+
+    // Compter les bungalows occupés
     const occupied = villageBungalows.filter(b => {
-      const participantsInBungalow = filteredParticipants.filter(p => p.assignedBungalowId === b.id);
-      return participantsInBungalow.length > 0;
+      const occupants = b.beds?.filter(bed => bed.occupiedBy !== null).length || 0;
+      return occupants > 0;
     }).length;
-    
+
     const total = villageBungalows.length;
-    
+
     let type = '';
     switch (village) {
       case 'A':
@@ -100,100 +106,112 @@ const Villages: React.FC = () => {
         type = 'Salle de douche + WC privés';
         break;
     }
-    
+
     return { type, occupancy: `${occupied}/${total} bungalows occupés` };
   };
 
-  const getLitInfo = (village: 'A' | 'B' | 'C') => {
-    console.log(getBungalowsByVillage("A"));
-    let bungalowInfo = getBungalowsByVillage(village);
-    let totalCapacity = bungalowInfo.reduce((sum, bungalow) => {
-      return sum + bungalow.capacity;
-    }, 0);
-
-    let totalOcupied = bungalowInfo.reduce((sum, bungalow) => {
-      const participantsInBungalow = filteredParticipants.filter(p => p.assignedBungalowId === bungalow.id);
-      return sum + participantsInBungalow.length;
-    }, 0);
-
-    return `${totalOcupied}/${totalCapacity} lits occupés`;
-  }
-  
   const getBungalowOccupancy = (bungalow: Bungalow) => {
-    // Compter les participants assignés à ce bungalow durant la période filtrée
-    const participantsInBungalow = filteredParticipants.filter(p => p.assignedBungalowId === bungalow.id);
-    return `${participantsInBungalow.length}/${bungalow.capacity}`;
+    const occupants = bungalow.beds?.filter(bed => bed.occupiedBy !== null).length || 0;
+    return `${occupants}/${bungalow.capacity}`;
   };
 
   const getBungalowStatus = (bungalow: Bungalow) => {
-    // Déterminer le statut basé sur les participants durant la période filtrée
-    const participantsInBungalow = filteredParticipants.filter(p => p.assignedBungalowId === bungalow.id);
-    const occupiedBeds = participantsInBungalow.length;
-    
-    if (occupiedBeds === 0) return 'empty';
-    if (occupiedBeds === bungalow.capacity) return 'full';
+    const occupants = bungalow.beds?.filter(bed => bed.occupiedBy !== null).length || 0;
+    if (occupants === 0) return 'empty';
+    if (occupants === bungalow.capacity) return 'full';
     return 'partial';
   };
 
-  const getParticipantName = (participantId: number) => {
-    const participant = participants.find(p => p.id === participantId);
-    return participant ? `${participant.firstName} ${participant.lastName}` : `Participant ${participantId}`;
+  const getBungalowOccupants = (bungalow: Bungalow) => {
+    if (!bungalow.beds) return [];
+    return bungalow.beds
+      .filter(bed => bed.occupiedBy !== null && bed.occupiedBy !== undefined)
+      .map(bed => {
+        const occ = bed.occupiedBy;
+        if (typeof occ === 'object' && occ !== null) {
+          return {
+            bedId: bed.id,
+            participantName: occ.name || 'Inconnu',
+            registrationId: occ.registrationId || null,
+            stageName: occ.stageName || null,
+            gender: occ.gender || null
+          };
+        }
+        // Fallback pour les anciennes données (string ou number)
+        return {
+          bedId: bed.id,
+          participantName: typeof occ === 'string' ? occ : `Participant #${occ}`,
+          registrationId: null,
+          stageName: null,
+          gender: null
+        };
+      });
   };
 
-  // Récupérer les participants non assignés
-  const getUnassignedParticipants = () => {
-    return participants.filter(p => !p.assignedBungalowId);
-  };
+  // Calculer les statistiques des lits
+  const totalBeds = bungalows.reduce((sum, b) => sum + b.capacity, 0);
+  const occupiedBeds = bungalows.reduce((sum, b) => {
+    const occupants = b.beds?.filter(bed => bed.occupiedBy !== null).length || 0;
+    return sum + occupants;
+  }, 0);
+  const availableBeds = totalBeds - occupiedBeds;
+  const occupiedBungalows = bungalows.filter(b => {
+    const occupants = b.beds?.filter(bed => bed.occupiedBy !== null).length || 0;
+    return occupants > 0;
+  }).length;
+  const totalBungalows = bungalows.length;
 
-  const handleAssignParticipant = async (e: React.FormEvent) => {
+  const handleAssignRegistration = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!selectedParticipant || !selectedBungalow || !selectedBed) {
-      alert('Veuillez remplir tous les champs');
+
+    if (!selectedRegistration || !selectedBungalow || !selectedBed) {
+      showAlertMessage('error', 'Veuillez remplir tous les champs');
       return;
     }
-
-    // Récupérer le premier stage du participant sélectionné
-    const participant = participants.find(p => p.id === selectedParticipant);
-    if (!participant || !participant.stageIds || participant.stageIds.length === 0) {
-      alert('Ce participant n\'est inscrit à aucun stage');
-      return;
-    }
-
-    // Utiliser le premier stage du participant
-    const participantStage = participant.stageIds[0];
 
     try {
-      await dataService.assignParticipant(selectedParticipant, selectedBungalow, selectedBed, participantStage);
-      
+      await apiService.assignRegistration(selectedRegistration, {
+        bungalowId: selectedBungalow,
+        bed: selectedBed
+      });
+
       // Recharger les données
-      const [participantsData, bungalowsData] = await Promise.all([
-        dataService.getParticipants(),
-        dataService.getBungalows()
-      ]);
-      setParticipants(participantsData);
-      setBungalows(bungalowsData);
-      
+      await reloadData();
+
       // Fermer le modal et réinitialiser
       setShowAssignModal(false);
-      setSelectedParticipant(null);
+      setSelectedRegistration(null);
       setSelectedBungalow(null);
       setSelectedBed('');
-      setSelectedStage(null);
-      
-      alert('Participant assigné avec succès !');
+
+      showAlertMessage('success', 'Inscription assignée avec succès !');
     } catch (error: any) {
-      alert('Erreur lors de l\'assignation: ' + (error.message || 'Erreur inconnue'));
+      showAlertMessage('error', 'Erreur lors de l\'assignation: ' + (error.message || 'Erreur inconnue'));
+    }
+  };
+
+  // Format date pour affichage
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+  };
+
+  const getRoleText = (role: string) => {
+    switch (role) {
+      case 'participant': return 'Participant';
+      case 'musician': return 'Musicien';
+      case 'instructor': return 'Instructeur';
+      case 'staff': return 'Staff';
+      default: return role;
     }
   };
 
   const renderBungalowCard = (bungalow: Bungalow) => {
     const status = getBungalowStatus(bungalow);
     const occupancy = getBungalowOccupancy(bungalow);
-    
-    // Récupérer les participants assignés à ce bungalow durant la période
-    const participantsInBungalow = filteredParticipants.filter(p => p.assignedBungalowId === bungalow.id);
-    
+    const occupants = getBungalowOccupants(bungalow);
+
     return (
       <div key={bungalow.id} className={`bungalow-card ${status}`}>
         <div className="bungalow-header">
@@ -213,50 +231,57 @@ const Villages: React.FC = () => {
               <span>Type {bungalow.type}</span>
             </div>
           </div>
-          
-          {/* Afficher les participants dans ce bungalow */}
-          {participantsInBungalow.length > 0 ? (
+
+          {/* Afficher les occupants dans ce bungalow */}
+          {occupants.length > 0 ? (
             <div className="participants-list" style={{
               marginTop: '1rem',
               padding: '0.5rem',
               backgroundColor: '#f5f5f5',
               borderRadius: '4px'
             }}>
-              <h4 style={{ 
-                fontSize: '0.9rem', 
+              <h4 style={{
+                fontSize: '0.9rem',
                 marginBottom: '0.5rem',
                 color: '#666',
                 fontWeight: '600'
               }}>
                 <i className="fas fa-users" style={{marginRight: '0.5rem'}}></i>
-                Participants ({participantsInBungalow.length})
+                Occupants ({occupants.length})
               </h4>
-              {participantsInBungalow.map(participant => (
-                <div key={participant.id} style={{
+              {occupants.map((occupant, idx) => (
+                <div key={idx} style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '0.5rem',
-                  padding: '0.4rem',
+                  padding: '0.5rem',
                   marginBottom: '0.3rem',
                   backgroundColor: 'white',
-                  borderRadius: '3px',
-                  fontSize: '0.85rem'
+                  borderRadius: '4px',
+                  fontSize: '0.85rem',
+                  border: '1px solid #E5E7EB'
                 }}>
-                  <i className={`fas fa-${participant.gender === 'M' ? 'male' : 'female'}`} 
-                     style={{color: participant.gender === 'M' ? '#2196F3' : '#E91E63'}}></i>
-                  <span style={{fontWeight: '500'}}>
-                    {participant.firstName} {participant.lastName}
+                  <i className={`fas fa-${occupant.gender === 'M' ? 'male' : 'female'}`}
+                     style={{color: occupant.gender === 'M' ? '#3B82F6' : '#EC4899'}}></i>
+                  <div style={{flex: 1}}>
+                    <div style={{fontWeight: '500'}}>
+                      {occupant.participantName}
+                    </div>
+                    {occupant.stageName && (
+                      <div style={{fontSize: '0.75rem', color: '#6B7280'}}>
+                        {occupant.stageName}
+                      </div>
+                    )}
+                  </div>
+                  <span style={{
+                    fontSize: '0.75rem',
+                    color: '#9CA3AF',
+                    backgroundColor: '#F3F4F6',
+                    padding: '2px 6px',
+                    borderRadius: '3px'
+                  }}>
+                    {occupant.bedId}
                   </span>
-                  {participant.assignedBed && (
-                    <span style={{
-                      marginLeft: 'auto',
-                      fontSize: '0.8rem',
-                      color: '#666',
-                      fontStyle: 'italic'
-                    }}>
-                      {participant.assignedBed}
-                    </span>
-                  )}
                 </div>
               ))}
             </div>
@@ -271,12 +296,18 @@ const Villages: React.FC = () => {
               fontSize: '0.85rem'
             }}>
               <i className="fas fa-check-circle" style={{marginRight: '0.5rem'}}></i>
-              Aucun participant assigné
+              Aucun occupant
             </div>
           )}
         </div>
         <div className="bungalow-actions">
-          <button className="btn btn-sm btn-primary">
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => {
+              setSelectedBungalow(bungalow.id);
+              setShowAssignModal(true);
+            }}
+          >
             <i className="fas fa-user-plus"></i>
             Assigner
           </button>
@@ -287,12 +318,25 @@ const Villages: React.FC = () => {
 
   return (
     <>
+      {/* Alert System */}
+      {alert && (
+        <div className={`alert alert-${alert.type}`}>
+          <div className="alert-content">
+            <i className={`fas ${alert.type === 'success' ? 'fa-check-circle' : alert.type === 'error' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle'}`}></i>
+            <span>{alert.message}</span>
+          </div>
+          <button className="alert-close" onClick={() => setAlert(null)}>
+            <i className="fas fa-times"></i>
+          </button>
+        </div>
+      )}
+
       <header className="main-header">
         <h1>Villages</h1>
-        
-        <div style={{ 
-          display: 'flex', 
-          gap: '1rem', 
+
+        <div style={{
+          display: 'flex',
+          gap: '1rem',
           alignItems: 'center',
           marginBottom: '1rem',
           flexWrap: 'wrap'
@@ -336,17 +380,17 @@ const Villages: React.FC = () => {
             </div>
           )}
         </div>
-        
+
         <div className="header-actions">
           <div className="view-controls">
-            <button 
+            <button
               className={`btn btn-secondary ${viewMode === 'grid' ? 'active' : ''}`}
               onClick={() => setViewMode('grid')}
             >
               <i className="fas fa-th"></i>
               Grille
             </button>
-            <button 
+            <button
               className={`btn btn-secondary ${viewMode === 'list' ? 'active' : ''}`}
               onClick={() => setViewMode('list')}
             >
@@ -354,68 +398,222 @@ const Villages: React.FC = () => {
               Liste
             </button>
           </div>
-          <button 
+          <button
             className="btn btn-primary"
             onClick={() => setShowAssignModal(true)}
           >
             <i className="fas fa-user-plus"></i>
-            Assigner Participant
+            Assigner Inscription
           </button>
         </div>
       </header>
-      
-      <div className="villages-content">
-        {(['A', 'B', 'C'] as const).map((village) => {
-          const villageBungalows = getBungalowsByVillage(village);
-          const villageInfo = getVillageInfo(village);
-          const litInfo = getLitInfo(village);
-          
-          return (
-            <div key={village} className="village-section">
-              <div className="village-header">
-                <h2>Village {village}</h2>
-                <div className="village-info">
-                  <span className="village-type">{villageInfo.type}</span>
-                  <span className="occupancy">{villageInfo.occupancy}</span>
-                  <span className="occupancy">{litInfo}</span>
+
+      {/* Métriques des lits */}
+      <div className="villages-metrics" style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+        gap: '1rem',
+        margin: '1.5rem 0',
+        padding: '0 1rem'
+      }}>
+        <div style={{
+          backgroundColor: 'white',
+          padding: '1.5rem',
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1rem'
+        }}>
+          <div style={{
+            width: '50px',
+            height: '50px',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            fontSize: '1.5rem'
+          }}>
+            <i className="fas fa-bed"></i>
+          </div>
+          <div>
+            <h3 style={{margin: 0, fontSize: '1.8rem', color: '#2c3e50'}}>{totalBeds}</h3>
+            <p style={{margin: '0.25rem 0 0 0', color: '#7f8c8d', fontSize: '0.9rem'}}>Total Lits</p>
+          </div>
+        </div>
+
+        <div style={{
+          backgroundColor: 'white',
+          padding: '1.5rem',
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1rem'
+        }}>
+          <div style={{
+            width: '50px',
+            height: '50px',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #27ae60, #2ecc71)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            fontSize: '1.5rem'
+          }}>
+            <i className="fas fa-check-circle"></i>
+          </div>
+          <div>
+            <h3 style={{margin: 0, fontSize: '1.8rem', color: '#2c3e50'}}>{availableBeds}</h3>
+            <p style={{margin: '0.25rem 0 0 0', color: '#7f8c8d', fontSize: '0.9rem'}}>Lits Disponibles</p>
+          </div>
+        </div>
+
+        <div style={{
+          backgroundColor: 'white',
+          padding: '1.5rem',
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1rem'
+        }}>
+          <div style={{
+            width: '50px',
+            height: '50px',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #3498db, #5dade2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            fontSize: '1.5rem'
+          }}>
+            <i className="fas fa-users"></i>
+          </div>
+          <div>
+            <h3 style={{margin: 0, fontSize: '1.8rem', color: '#2c3e50'}}>{occupiedBeds}</h3>
+            <p style={{margin: '0.25rem 0 0 0', color: '#7f8c8d', fontSize: '0.9rem'}}>Lits Occupés</p>
+          </div>
+        </div>
+
+        <div style={{
+          backgroundColor: 'white',
+          padding: '1.5rem',
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1rem'
+        }}>
+          <div style={{
+            width: '50px',
+            height: '50px',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #f39c12, #f8c471)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            fontSize: '1.5rem'
+          }}>
+            <i className="fas fa-home"></i>
+          </div>
+          <div>
+            <h3 style={{margin: 0, fontSize: '1.8rem', color: '#2c3e50'}}>{occupiedBungalows}/{totalBungalows}</h3>
+            <p style={{margin: '0.25rem 0 0 0', color: '#7f8c8d', fontSize: '0.9rem'}}>Chambres Occupées</p>
+          </div>
+        </div>
+
+        <div style={{
+          backgroundColor: 'white',
+          padding: '1.5rem',
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '1rem'
+        }}>
+          <div style={{
+            width: '50px',
+            height: '50px',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #e74c3c, #c0392b)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            fontSize: '1.5rem'
+          }}>
+            <i className="fas fa-clipboard-list"></i>
+          </div>
+          <div>
+            <h3 style={{margin: 0, fontSize: '1.8rem', color: '#2c3e50'}}>{registrations.length}</h3>
+            <p style={{margin: '0.25rem 0 0 0', color: '#7f8c8d', fontSize: '0.9rem'}}>Non Assignés</p>
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{textAlign: 'center', padding: '3rem'}}>
+          <i className="fas fa-spinner fa-spin" style={{fontSize: '2rem', color: '#6366F1'}}></i>
+          <p style={{marginTop: '1rem', color: '#6B7280'}}>Chargement...</p>
+        </div>
+      ) : (
+        <div className="villages-content">
+          {(['A', 'B', 'C'] as const).map((village) => {
+            const villageBungalows = getBungalowsByVillage(village);
+            const villageInfo = getVillageInfo(village);
+
+            return (
+              <div key={village} className="village-section">
+                <div className="village-header">
+                  <h2>Village {village}</h2>
+                  <div className="village-info">
+                    <span className="village-type">{villageInfo.type}</span>
+                    <span className="occupancy">{villageInfo.occupancy}</span>
+                  </div>
+                </div>
+                <div className={`bungalows-grid ${viewMode}`}>
+                  {villageBungalows.map(renderBungalowCard)}
                 </div>
               </div>
-              <div className={`bungalows-grid ${viewMode}`}>
-                {villageBungalows.map(renderBungalowCard)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Assignment Modal */}
       {showAssignModal && (
         <div className="modal-overlay" onClick={() => setShowAssignModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Assigner Participant</h2>
+              <h2>Assigner une Inscription</h2>
               <button className="close-btn" onClick={() => setShowAssignModal(false)}>&times;</button>
             </div>
-            <form className="modal-form" onSubmit={handleAssignParticipant}>
+            <form className="modal-form" onSubmit={handleAssignRegistration}>
               <div className="form-group">
-                <label htmlFor="participantSelect">Sélectionner Participant (non assignés uniquement)</label>
-                <select 
-                  id="participantSelect" 
-                  name="participantSelect" 
+                <label htmlFor="registrationSelect">Sélectionner une Inscription (non assignées)</label>
+                <select
+                  id="registrationSelect"
+                  name="registrationSelect"
                   required
-                  value={selectedParticipant || ''}
-                  onChange={(e) => setSelectedParticipant(parseInt(e.target.value))}
+                  value={selectedRegistration || ''}
+                  onChange={(e) => setSelectedRegistration(parseInt(e.target.value))}
                 >
-                  <option value="">Choisir un participant...</option>
-                  {getUnassignedParticipants().map(participant => (
-                    <option key={participant.id} value={participant.id}>
-                      {participant.firstName} {participant.lastName} - Stages {participant.stageIds?.join(', ') || 'Aucun'}
+                  <option value="">Choisir une inscription...</option>
+                  {registrations.map(registration => (
+                    <option key={registration.id} value={registration.id}>
+                      {registration.participantName} - {registration.stageName} ({formatDate(registration.effectiveArrivalDate)} → {formatDate(registration.effectiveDepartureDate)})
                     </option>
                   ))}
                 </select>
               </div>
               <div className="form-group">
-                <label htmlFor="stageInfo">Stage du Participant</label>
+                <label htmlFor="registrationInfo">Détails de l'inscription</label>
                 <div style={{
                   padding: '0.75rem',
                   backgroundColor: '#f8f9fa',
@@ -423,24 +621,34 @@ const Villages: React.FC = () => {
                   borderRadius: '4px',
                   fontSize: '0.9rem'
                 }}>
-                  {selectedParticipant && (() => {
-                    const participant = participants.find(p => p.id === selectedParticipant);
-                    if (participant && participant.stageIds && participant.stageIds.length > 0) {
-                      const participantStages = participant.stageIds.map(stageId => {
-                        const stage = stages.find(s => s.id === stageId);
-                        return stage ? stage.name : `Stage ${stageId}`;
-                      });
+                  {selectedRegistration && (() => {
+                    const registration = registrations.find(r => r.id === selectedRegistration);
+                    if (registration) {
                       return (
                         <div>
-                          <i className="fas fa-graduation-cap" style={{marginRight: '0.5rem', color: '#007bff'}}></i>
-                          <strong>Stages inscrits:</strong> {participantStages.join(', ')}
+                          <div style={{marginBottom: '0.5rem'}}>
+                            <i className="fas fa-user" style={{marginRight: '0.5rem', color: '#6366F1'}}></i>
+                            <strong>{registration.participantName}</strong> ({registration.participantGender === 'M' ? 'Homme' : 'Femme'}, {registration.participantAge} ans)
+                          </div>
+                          <div style={{marginBottom: '0.5rem'}}>
+                            <i className="fas fa-calendar-alt" style={{marginRight: '0.5rem', color: '#10B981'}}></i>
+                            <strong>Événement:</strong> {registration.stageName}
+                          </div>
+                          <div style={{marginBottom: '0.5rem'}}>
+                            <i className="fas fa-clock" style={{marginRight: '0.5rem', color: '#F59E0B'}}></i>
+                            <strong>Période:</strong> {formatDate(registration.effectiveArrivalDate)} → {formatDate(registration.effectiveDepartureDate)}
+                          </div>
+                          <div>
+                            <i className="fas fa-tag" style={{marginRight: '0.5rem', color: '#8B5CF6'}}></i>
+                            <strong>Rôle:</strong> {getRoleText(registration.role)}
+                          </div>
                         </div>
                       );
                     }
                     return (
                       <div style={{color: '#6c757d', fontStyle: 'italic'}}>
                         <i className="fas fa-info-circle" style={{marginRight: '0.5rem'}}></i>
-                        Sélectionnez un participant pour voir ses stages
+                        Sélectionnez une inscription pour voir les détails
                       </div>
                     );
                   })()}
@@ -448,9 +656,9 @@ const Villages: React.FC = () => {
               </div>
               <div className="form-group">
                 <label htmlFor="bungalowSelect">Sélectionner Bungalow</label>
-                <select 
-                  id="bungalowSelect" 
-                  name="bungalowSelect" 
+                <select
+                  id="bungalowSelect"
+                  name="bungalowSelect"
                   required
                   value={selectedBungalow || ''}
                   onChange={(e) => setSelectedBungalow(parseInt(e.target.value))}
@@ -465,9 +673,9 @@ const Villages: React.FC = () => {
               </div>
               <div className="form-group">
                 <label htmlFor="bedSelect">Sélectionner Lit</label>
-                <select 
-                  id="bedSelect" 
-                  name="bedSelect" 
+                <select
+                  id="bedSelect"
+                  name="bedSelect"
                   required
                   value={selectedBed}
                   onChange={(e) => setSelectedBed(e.target.value)}
@@ -495,10 +703,9 @@ const Villages: React.FC = () => {
               <div className="modal-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => {
                   setShowAssignModal(false);
-                  setSelectedParticipant(null);
+                  setSelectedRegistration(null);
                   setSelectedBungalow(null);
                   setSelectedBed('');
-                  setSelectedStage(null);
                 }}>
                   Annuler
                 </button>
