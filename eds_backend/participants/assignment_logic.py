@@ -288,3 +288,180 @@ def get_bungalow_availability(bungalow: Bungalow, start_date: date, end_date: da
         'is_full': len(occupied_beds) >= bungalow.capacity
     }
 
+class ParticipantType:
+    STUDENT = "Eleve"
+    TEACHER = "Enseignant"
+    STAFF = "Salarie"
+    RESIDENT = "Resident"
+
+class BedType:
+    SINGLE = "simple"
+    DOUBLE = "double"
+
+# --- Automatic Assignment Helper Functions ---
+
+# Note: The existing functions 'check_date_overlap', 
+# 'get_participant_assignment_dates', and 'validate_assignment' (which enforces 
+# gender, stage, and overlap rules) are reused here.
+
+def find_best_bed_for_teacher_or_staff(
+    participant: 'Participant', 
+    stage: 'Stage', 
+    all_bungalows: List['Bungalow'], 
+    is_teacher: bool
+) -> Optional[Tuple['Bungalow', str]]:
+    """
+    Finds the best bungalow and bed for a single-occupancy assignment.
+    Priority: Double bed (for teacher), then any single/double bed (for staff).
+    """
+    
+    target_bed_type = BedType.DOUBLE if is_teacher else None
+
+    # Try to find a completely free room first (for exclusivity)
+    for bungalow in all_bungalows:
+        assignment_start, assignment_end = get_participant_assignment_dates(participant, stage)
+        
+        # Check if the bungalow is empty during the period
+        # In a real Django setup, this would be an expensive query:
+        occupants = bungalow.get_current_occupants(assignment_start, assignment_end) 
+        if occupants:
+            continue # We want an empty room for priority 1 and 2
+
+        for bed in bungalow.beds:
+            bed_id = bed.get('id')
+            bed_type = bed.get('type')
+            
+            # 1. Double bed required for teachers
+            if is_teacher and bed_type != target_bed_type:
+                continue
+
+            # 2. Single or double bed for staff (Any valid bed)
+            if not is_teacher and bed_type not in [BedType.SINGLE, BedType.DOUBLE]:
+                continue
+                
+            # Check basic validity (gender, stage, overlap - though overlap 
+            # shouldn't fail if the room is empty)
+            is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+            
+            if is_valid:
+                return bungalow, bed_id
+
+    return None
+
+def find_best_bed_for_student(
+    participant: 'Participant', 
+    stage: 'Stage', 
+    all_bungalows: List['Bungalow']
+) -> Optional[Tuple['Bungalow', str]]:
+    """
+    Finds the best bed for a student, prioritizing fill optimization.
+    Priority:
+    1. Bungalow already occupied by a student of the same stage/gender, with an available single bed.
+    2. New, empty bungalow.
+    """
+    assignment_start, assignment_end = get_participant_assignment_dates(participant, stage)
+    
+    # 1. Search for a PARTIALLY filled bungalow (Optimization step)
+    for bungalow in all_bungalows:
+        occupants = bungalow.get_current_occupants(assignment_start, assignment_end)
+        
+        if occupants:
+            # Check if at least one occupant is compatible (same stage, same gender)
+            compatible_occupant = next(
+                (
+                    o for o in occupants 
+                    if o.gender == participant.gender and 
+                       o.stages_all() and any(s.name == stage.name for s in o.stages_all()) # Check same stage
+                ), 
+                None
+            )
+            
+            if compatible_occupant:
+                # Check the max capacity constraint for this specific stage
+                if len(occupants) < stage.max_students_per_room:
+                    # Find the first available single bed
+                    for bed in bungalow.beds:
+                        bed_id = bed.get('id')
+                        # Ensure the bed is not already occupied
+                        if not any(o.assigned_bed == bed_id for o in occupants):
+                            # The validation function handles all remaining checks (overlap on bed)
+                            is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                            if is_valid:
+                                return bungalow, bed_id
+
+    # 2. Search for a NEW bungalow (empty)
+    for bungalow in all_bungalows:
+        # Check if the bungalow is empty during the period
+        if not bungalow.get_current_occupants(assignment_start, assignment_end):
+            # Find the first available single bed
+            for bed in bungalow.beds:
+                bed_id = bed.get('id')
+                is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                if is_valid:
+                    return bungalow, bed_id
+                    
+    return None
+
+
+def assign_participants_automatically(
+    participants_to_assign: List['Participant'], 
+    stage: 'Stage', 
+    all_bungalows: List['Bungalow']
+) -> Dict[str, List[Dict]]:
+    """
+    Optimized automatic assignment of participants for a given stage.
+    """
+    
+    results = {'success': [], 'failure': []}
+    
+    # --- 1. SEPARATE GROUPS FOR PRIORITIZATION ---
+    teachers = [p for p in participants_to_assign if p.p_type == ParticipantType.TEACHER]
+    staff = [p for p in participants_to_assign if p.p_type == ParticipantType.STAFF]
+    students_and_residents = [p for p in participants_to_assign if p.p_type in [ParticipantType.STUDENT, ParticipantType.RESIDENT]]
+    
+    # --- 2. PRIORITY 1: TEACHERS (Individual room, Double bed) ---
+    for p in teachers:
+        assignment = find_best_bed_for_teacher_or_staff(p, stage, all_bungalows, is_teacher=True)
+        if assignment:
+            bungalow, bed_id = assignment
+            success, message, details = assign_participant_to_bungalow(p, bungalow, bed_id, stage)
+            if success:
+                results['success'].append(details)
+            else:
+                results['failure'].append({'participant': p.full_name, 'reason': message, 'details': details})
+        else:
+            results['failure'].append({'participant': p.full_name, 'reason': "No suitable individual room/double bed found for the teacher."})
+            
+    # --- 3. PRIORITY 2: STAFF / REINFORCEMENTS (Individual room) ---
+    for p in staff:
+        assignment = find_best_bed_for_teacher_or_staff(p, stage, all_bungalows, is_teacher=False)
+        if assignment:
+            bungalow, bed_id = assignment
+            success, message, details = assign_participant_to_bungalow(p, bungalow, bed_id, stage)
+            if success:
+                results['success'].append(details)
+            else:
+                results['failure'].append({'participant': p.full_name, 'reason': message, 'details': details})
+        else:
+            results['failure'].append({'participant': p.full_name, 'reason': "No suitable individual room found for the staff member."})
+
+    # --- 4. PRIORITY 3: STUDENTS / RESIDENTS (Fill Optimization) ---
+    
+    # Sort students for better cohabitation grouping (Optimization: Greedy Approach)
+    # Sort key: (gender, language, age_group)
+    students_and_residents.sort(key=lambda p: (p.gender, p.language, p.age_group))
+    
+    for p in students_and_residents:
+        assignment = find_best_bed_for_student(p, stage, all_bungalows)
+        if assignment:
+            bungalow, bed_id = assignment
+            # Assign the participant
+            success, message, details = assign_participant_to_bungalow(p, bungalow, bed_id, stage)
+            if success:
+                results['success'].append(details)
+            else:
+                results['failure'].append({'participant': p.full_name, 'reason': message, 'details': details})
+        else:
+            results['failure'].append({'participant': p.full_name, 'reason': "No available bed found for the student while respecting all constraints. External housing may be required."})
+            
+    return results
