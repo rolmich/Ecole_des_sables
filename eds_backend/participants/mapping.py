@@ -8,7 +8,7 @@ exit :  list of tuples (Participant, room) for each Participant in the list,
 
 
 """
-
+from datetime import date
 rooms = {
     "A1": {"type": "A", "capacity": 3, "village": "A"},
     "A2": {"type": "B", "capacity": 2, "village": "A"},  # double bed
@@ -56,14 +56,36 @@ def room_free(room,liste,Person):
                 return False
     return True
 
-def valeur(room,Person,liste):
-    val=0
-    for p in liste[room]:
-        P=people[p]
-        val
-    val=Person["age"]-len(liste[room])*5
-    return val
+def difference_date(d1,d2):
+    """Calcule la différence en jours entre deux dates d1 et d2.
+    Les dates sont des tuples (année, mois, jour).
+    Renvoie un entier positif.
+    """
+    
+    date1 = date(d1[0], d1[1], d1[2])
+    date2 = date(d2[0], d2[1], d2[2])
+    return abs((date2 - date1).days)
 
+def cost(persons):
+     
+    if len(persons)==2:
+        if persons[0]["end"] < persons[1]["start"] or persons[0]["start"] > persons[1]["end"]:
+            return float('inf')
+        c=0
+        c+=abs(persons[0]["age"]-persons[1]["age"])
+        c+=difference_date(persons[0]["start"],persons[1]["start"])
+        c+=difference_date(persons[0]["end"],persons[1]["end"])
+        if len(set(persons[0]["langage"]).intersection(set(persons[1]["langage"])))!=0:
+            c+=10
+    else:
+        c=0
+        c+=cost(persons[:2])
+        c+=cost(persons[1:])
+        c+=cost(persons[::2])
+        c/=3
+    return c
+
+    
 def rooming(people,rooms,liste):
     """Renvoie une liste de tuples (Personne, chambre) pour chaque Personne
     dans la liste Personne, en respectant les contraintes de debut et fin
@@ -75,7 +97,7 @@ def rooming(people,rooms,liste):
         for room in rooms:
             chambre=[]
             if room_free(room,liste, P):
-                chambre.append(room,valeur(room,P,liste))
+                chambre.append((room,cost([P]+[people[n] for n in liste[room]])))
         if len(chambre)>0:
             chambre.sort(key=lambda x:x[1],reverse=True)
             liste[chambre[0]].append(name)
@@ -83,6 +105,31 @@ def rooming(people,rooms,liste):
             erreur.append(name)
     
 
+
+    return liste,erreur
+
+def groupe(liste,people):
+    grp=[] #***************************************************************
+    return grp
+
+def rooming_V2(people,rooms,liste):
+    """Renvoie une liste de tuples (Personne, chambre) pour chaque Personne
+    dans la liste Personne, en respectant les contraintes de debut et fin
+    (incluses) et la contrainte de chambre (un entier).
+    """
+    erreur = []
+    groupe=groupe(liste,people)
+    
+    for G1 in groupe:
+        if len(G1)>=3:
+            continue
+
+        for G2 in groupe:
+            if G1!=G2:
+                for person1 in G1:
+                    for person2 in G2:
+                        #try to swap person1 and person2
+                        pass
 
     return liste,erreur
 print(rooming(people,rooms,liste))
