@@ -16,6 +16,8 @@ python3 manage.py migrate
 # Inicializa usuários padrão
 echo "Inicializando usuários padrão..."
 python3 init_db.py
+python3 populate_villages.py
+python3 populate_languages.py
 
 # Inicia o servidor Django
 echo "Iniciando servidor Django..."
