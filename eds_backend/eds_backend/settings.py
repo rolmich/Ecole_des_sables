@@ -97,6 +97,17 @@ DATABASES = {
     }
 }
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'meubanco',            
+#         'USER': 'meuusuario',          
+#         'PASSWORD': 'minhasenha',      
+#         'HOST': 'meu-postgres',        
+#         'PORT': '5432',                
+#     }
+# }
+
 
 # Custom User Model
 AUTH_USER_MODEL = 'authentication.User'
