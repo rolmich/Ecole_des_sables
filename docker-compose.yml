@@ -27,7 +27,6 @@ services:
       - DB_NAME=meubanco
     depends_on:
       - db
-    entrypoint: ["/entrypoint.sh"]
     restart: always
 
   frontend:

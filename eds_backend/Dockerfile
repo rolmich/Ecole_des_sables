@@ -31,12 +31,24 @@ RUN pip install --upgrade pip setuptools wheel \
 # Copiar todo o código da aplicação
 COPY . .
 
-# Copiar entrypoint
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Definir variáveis de ambiente (ajuste conforme docker-compose)
+ENV DB_HOST=meu-postgres
+ENV DB_PORT=5432
 
 # Expor porta padrão do Django
-EXPOSE 8000
+EXPOSE 5000
 
-# Comando de inicialização
-CMD ["/entrypoint.sh"]
+# Comando de inicialização direto no Dockerfile
+CMD bash -c "\
+echo 'Esperando o banco de dados $DB_HOST:$DB_PORT...'; \
+while ! nc -z \$DB_HOST \$DB_PORT; do sleep 1; done; \
+echo 'Banco de dados disponível!'; \
+echo 'Aplicando migrations...'; \
+python3 manage.py makemigrations; \
+python3 manage.py migrate; \
+echo 'Inicializando dados padrão...'; \
+python3 init_db.py; \
+python3 populate_villages.py; \
+python3 populate_languages.py; \
+echo 'Iniciando servidor Django...'; \
+exec python3 manage.py runserver 0.0.0.0:5000"
