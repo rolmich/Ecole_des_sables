@@ -4,11 +4,16 @@ export interface BedOccupant {
   participantId: number;
   name: string;
   gender: 'M' | 'F';
+  age?: number;
+  nationality?: string;
+  languages?: string[];
+  role?: 'instructor' | 'musician' | 'staff' | 'participant';
   startDate: string;
   startTime?: string;
   endDate: string;
   endTime?: string;
   stageName: string;
+  wasForced?: boolean;  // Indique si l'assignation a été forcée (conflit accepté)
 }
 
 export interface Bed {

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Language, LanguageCreateData, LanguageUpdateData } from '../types/Language';
 import apiService from '../services/api';
+import ConfirmModal from './ConfirmModal';
+import Pagination from './Pagination';
 
 const ITEMS_PER_PAGE = 9; // 3x3 grid
 
@@ -14,6 +16,17 @@ const Languages: React.FC = () => {
   const [alert, setAlert] = useState<{type: 'success' | 'error' | 'warning', message: string} | null>(null);
   const [loading, setLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title?: string;
+    message: string;
+    onConfirm: () => void;
+    type?: 'warning' | 'danger' | 'info';
+  }>({
+    isOpen: false,
+    message: '',
+    onConfirm: () => {}
+  });
 
   const showAlert = (type: 'success' | 'error' | 'warning', message: string) => {
     setAlert({ type, message });
@@ -104,18 +117,27 @@ const Languages: React.FC = () => {
 
   const handleDeleteLanguage = async (id: number) => {
     const language = languages.find(l => l.id === id);
-    if (language && window.confirm(`Êtes-vous sûr de vouloir supprimer la langue ${language.name} ?`)) {
-      try {
-        setLoading(true);
-        await apiService.deleteLanguage(id);
-        await loadLanguages();
-        showAlert('warning', `Langue ${language.name} supprimée`);
-      } catch (error: any) {
-        const errorMessage = error.data?.error || error.message || 'Erreur lors de la suppression de la langue';
-        showAlert('error', errorMessage);
-      } finally {
-        setLoading(false);
-      }
+    if (language) {
+      setConfirmModal({
+        isOpen: true,
+        title: 'Supprimer la langue',
+        message: `Êtes-vous sûr de vouloir supprimer la langue ${language.name} ?\n\nCette action est irréversible.`,
+        type: 'danger',
+        onConfirm: async () => {
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+          try {
+            setLoading(true);
+            await apiService.deleteLanguage(id);
+            await loadLanguages();
+            showAlert('warning', `Langue ${language.name} supprimée`);
+          } catch (error: any) {
+            const errorMessage = error.data?.error || error.message || 'Erreur lors de la suppression de la langue';
+            showAlert('error', errorMessage);
+          } finally {
+            setLoading(false);
+          }
+        }
+      });
     }
   };
 
@@ -663,95 +685,14 @@ const Languages: React.FC = () => {
       )}
 
       {/* Pagination */}
-      {totalPages > 1 && (
-        <div style={{
-          marginTop: '1.5rem',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          gap: '0.5rem'
-        }}>
-          {/* Bouton précédent */}
-          <button
-            onClick={() => goToPage(currentPage - 1)}
-            disabled={currentPage === 1}
-            style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '10px',
-              border: currentPage === 1 ? '1px solid #E5E7EB' : '1px solid #DC2626',
-              background: currentPage === 1 ? '#F9FAFB' : 'white',
-              color: currentPage === 1 ? '#9CA3AF' : '#DC2626',
-              cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'all 0.2s'
-            }}
-          >
-            <i className="fas fa-chevron-left"></i>
-          </button>
-
-          {/* Numéros de page */}
-          {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
-            // Afficher seulement les pages proches de la page actuelle
-            if (
-              page === 1 ||
-              page === totalPages ||
-              (page >= currentPage - 1 && page <= currentPage + 1)
-            ) {
-              return (
-                <button
-                  key={page}
-                  onClick={() => goToPage(page)}
-                  style={{
-                    width: '40px',
-                    height: '40px',
-                    borderRadius: '10px',
-                    border: currentPage === page ? '2px solid #DC2626' : '1px solid #E5E7EB',
-                    background: currentPage === page ? '#FEF2F2' : 'white',
-                    color: currentPage === page ? '#DC2626' : '#6B7280',
-                    cursor: 'pointer',
-                    fontWeight: '600',
-                    fontSize: '0.9rem',
-                    transition: 'all 0.2s'
-                  }}
-                >
-                  {page}
-                </button>
-              );
-            } else if (
-              page === currentPage - 2 ||
-              page === currentPage + 2
-            ) {
-              return (
-                <span key={page} style={{ color: '#9CA3AF', padding: '0 0.25rem' }}>...</span>
-              );
-            }
-            return null;
-          })}
-
-          {/* Bouton suivant */}
-          <button
-            onClick={() => goToPage(currentPage + 1)}
-            disabled={currentPage === totalPages}
-            style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '10px',
-              border: currentPage === totalPages ? '1px solid #E5E7EB' : '1px solid #DC2626',
-              background: currentPage === totalPages ? '#F9FAFB' : 'white',
-              color: currentPage === totalPages ? '#9CA3AF' : '#DC2626',
-              cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'all 0.2s'
-            }}
-          >
-            <i className="fas fa-chevron-right"></i>
-          </button>
-        </div>
+      {filteredLanguages.length > 0 && (
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={goToPage}
+          itemsPerPage={ITEMS_PER_PAGE}
+          totalItems={filteredLanguages.length}
+        />
       )}
 
       {/* Info footer */}
@@ -798,6 +739,17 @@ const Languages: React.FC = () => {
 
       {showCreateModal && <CreateLanguageModal onClose={() => setShowCreateModal(false)} onCreate={handleCreateLanguage} />}
       {editingLanguage && <EditLanguageModal language={editingLanguage} onClose={() => setEditingLanguage(null)} onEdit={handleEditLanguage} />}
+
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        type={confirmModal.type}
+        confirmText="Supprimer"
+        cancelText="Annuler"
+      />
     </div>
   );
 };

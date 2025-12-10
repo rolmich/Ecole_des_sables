@@ -6,6 +6,7 @@ import { Participant } from '../types/Participant';
 import dataService from '../services/dataService';
 import PageHeader from './PageHeader';
 import ConfirmationModal from './ConfirmationModal';
+import Pagination from './Pagination';
 
 const StageDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -23,10 +24,13 @@ const StageDetail: React.FC = () => {
   const [editingParticipant, setEditingParticipant] = useState<ParticipantStage | null>(null);
   const [removingParticipant, setRemovingParticipant] = useState<ParticipantStage | null>(null);
 
-  // Search states
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<Participant[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
+  // Participants list
+  const [allParticipants, setAllParticipants] = useState<Participant[]>([]);
+  const [participantsLoading, setParticipantsLoading] = useState(false);
+
+  // États pour la pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(20); // 20 participants par page
 
   const showAlert = (type: 'success' | 'error' | 'warning', message: string) => {
     setAlert({ type, message });
@@ -57,24 +61,27 @@ const StageDetail: React.FC = () => {
     loadData();
   }, [loadData]);
 
-  // Search participants
-  const handleSearch = async (query: string) => {
-    setSearchQuery(query);
-    if (query.length < 2) {
-      setSearchResults([]);
-      return;
-    }
-
+  // Load all participants when modal opens
+  const loadAllParticipants = async () => {
     try {
-      setSearchLoading(true);
-      const results = await dataService.searchParticipants(query, stageId);
-      setSearchResults(results);
+      setParticipantsLoading(true);
+      // Utiliser la recherche avec une query vide pour obtenir tous les participants
+      const results = await dataService.searchParticipants('', stageId);
+      setAllParticipants(results);
     } catch (error) {
-      console.error('Search error:', error);
+      console.error('Error loading participants:', error);
+      showAlert('error', 'Erreur lors du chargement des participants');
     } finally {
-      setSearchLoading(false);
+      setParticipantsLoading(false);
     }
   };
+
+  // Load participants when modal opens
+  useEffect(() => {
+    if (showAddModal) {
+      loadAllParticipants();
+    }
+  }, [showAddModal]);
 
   // Add participant to stage
   const handleAddParticipant = async (participantId: number, formData: Partial<ParticipantStageCreate>) => {
@@ -86,8 +93,7 @@ const StageDetail: React.FC = () => {
       });
       showAlert('success', 'Participant ajouté avec succès');
       setShowAddModal(false);
-      setSearchQuery('');
-      setSearchResults([]);
+      setAllParticipants([]);
       loadData();
     } catch (error: any) {
       showAlert('error', error.message || 'Erreur lors de l\'ajout');
@@ -281,71 +287,136 @@ const StageDetail: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {participants.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      <div className="participant-info">
-                        <strong>{p.participantName}</strong>
-                        <small>{p.participantStatus}</small>
-                      </div>
-                    </td>
-                    <td>{p.participantEmail}</td>
-                    <td>{p.participantNationality || '-'}</td>
-                    <td>
-                      <span
-                        className="role-badge"
-                        style={{ backgroundColor: getRoleColor(p.role) }}
-                      >
-                        {p.roleDisplay}
-                      </span>
-                    </td>
-                    <td>
-                      {p.arrivalDate ? (
-                        <>
-                          {new Date(p.arrivalDate).toLocaleDateString('fr-FR')}
-                          {p.arrivalTime && <small> {p.arrivalTime}</small>}
-                        </>
-                      ) : '-'}
-                    </td>
-                    <td>
-                      {p.departureDate ? (
-                        <>
-                          {new Date(p.departureDate).toLocaleDateString('fr-FR')}
-                          {p.departureTime && <small> {p.departureTime}</small>}
-                        </>
-                      ) : '-'}
-                    </td>
-                    <td>
-                      {p.isAssigned ? (
-                        <span className="bungalow-badge">
-                          {p.assignedBungalowName} - Lit {p.assignedBed}
-                        </span>
-                      ) : (
-                        <span className="not-assigned">Non assigné</span>
-                      )}
-                    </td>
-                    <td>
-                      <div className="action-buttons">
-                        <button
-                          className="btn btn-sm btn-primary"
-                          onClick={() => setEditingParticipant(p)}
-                          title="Modifier"
-                        >
-                          <i className="fas fa-edit"></i>
-                        </button>
-                        <button
-                          className="btn btn-sm btn-danger"
-                          onClick={() => setRemovingParticipant(p)}
-                          title="Retirer"
-                        >
-                          <i className="fas fa-user-minus"></i>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {(() => {
+                  // Grouper les participants par rôle
+                  const roles = ['instructor', 'musician', 'staff', 'participant'] as const;
+                  const roleLabels = {
+                    'instructor': 'Encadrants',
+                    'musician': 'Musiciens',
+                    'staff': 'Staff',
+                    'participant': 'Participants'
+                  };
+
+                  const groupedParticipants = roles.map(role => ({
+                    role,
+                    label: roleLabels[role],
+                    participants: participants.filter(p => p.role === role)
+                  })).filter(group => group.participants.length > 0);
+
+                  // Pagination globale
+                  const startIndex = (currentPage - 1) * itemsPerPage;
+                  const endIndex = startIndex + itemsPerPage;
+
+                  // Aplatir les groupes avec headers
+                  const allRows: Array<{type: 'header', label: string, count: number} | {type: 'row', participant: ParticipantStage}> = [];
+                  groupedParticipants.forEach(group => {
+                    allRows.push({type: 'header', label: group.label, count: group.participants.length});
+                    group.participants.forEach(p => {
+                      allRows.push({type: 'row', participant: p});
+                    });
+                  });
+
+                  const paginatedRows = allRows.slice(startIndex, endIndex);
+
+                  return paginatedRows.map((item, idx) => {
+                    if (item.type === 'header') {
+                      return (
+                        <tr key={`header-${item.label}`} style={{backgroundColor: '#F3F4F6'}}>
+                          <td colSpan={8} style={{fontWeight: 'bold', fontSize: '1rem', padding: '0.75rem'}}>
+                            <i className={`fas fa-${
+                              item.label === 'Encadrants' ? 'chalkboard-teacher' :
+                              item.label === 'Musiciens' ? 'music' :
+                              item.label === 'Staff' ? 'user-cog' :
+                              'users'
+                            }`} style={{marginRight: '0.5rem'}}></i>
+                            {item.label} ({item.count})
+                          </td>
+                        </tr>
+                      );
+                    } else {
+                      const p = item.participant;
+                      return (
+                        <tr key={p.id}>
+                          <td>
+                            <div className="participant-info">
+                              <strong>{p.participantName}</strong>
+                              <small>{p.participantStatus}</small>
+                            </div>
+                          </td>
+                          <td>{p.participantEmail}</td>
+                          <td>{p.participantNationality || '-'}</td>
+                          <td>
+                            <span
+                              className="role-badge"
+                              style={{ backgroundColor: getRoleColor(p.role) }}
+                            >
+                              {p.roleDisplay}
+                            </span>
+                          </td>
+                          <td>
+                            {p.arrivalDate ? (
+                              <>
+                                {new Date(p.arrivalDate).toLocaleDateString('fr-FR')}
+                                {p.arrivalTime && <small> {p.arrivalTime}</small>}
+                              </>
+                            ) : '-'}
+                          </td>
+                          <td>
+                            {p.departureDate ? (
+                              <>
+                                {new Date(p.departureDate).toLocaleDateString('fr-FR')}
+                                {p.departureTime && <small> {p.departureTime}</small>}
+                              </>
+                            ) : '-'}
+                          </td>
+                          <td>
+                            {p.isAssigned ? (
+                              <span className="bungalow-badge">
+                                {p.assignedBungalowName} - Lit {p.assignedBed}
+                              </span>
+                            ) : (
+                              <span className="not-assigned">Non assigné</span>
+                            )}
+                          </td>
+                          <td>
+                            <div className="action-buttons">
+                              <button
+                                className="btn btn-sm btn-primary"
+                                onClick={() => setEditingParticipant(p)}
+                                title="Modifier"
+                              >
+                                <i className="fas fa-edit"></i>
+                              </button>
+                              <button
+                                className="btn btn-sm btn-danger"
+                                onClick={() => setRemovingParticipant(p)}
+                                title="Retirer"
+                              >
+                                <i className="fas fa-user-minus"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }
+                  });
+                })()}
               </tbody>
             </table>
+
+            {/* Pagination */}
+            {(() => {
+              const totalPages = Math.ceil(participants.length / itemsPerPage);
+              return (
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  onPageChange={setCurrentPage}
+                  itemsPerPage={itemsPerPage}
+                  totalItems={participants.length}
+                />
+              );
+            })()}
           </div>
         )}
       </div>
@@ -353,15 +424,12 @@ const StageDetail: React.FC = () => {
       {/* Add Participant Modal */}
       {showAddModal && (
         <AddParticipantModal
-          searchQuery={searchQuery}
-          searchResults={searchResults}
-          searchLoading={searchLoading}
-          onSearch={handleSearch}
+          allParticipants={allParticipants}
+          participantsLoading={participantsLoading}
           onAdd={handleAddParticipant}
           onClose={() => {
             setShowAddModal(false);
-            setSearchQuery('');
-            setSearchResults([]);
+            setAllParticipants([]);
           }}
           stageStartDate={stage.startDate}
           stageEndDate={stage.endDate}
@@ -395,10 +463,8 @@ const StageDetail: React.FC = () => {
 
 // Modal pour ajouter un participant
 interface AddParticipantModalProps {
-  searchQuery: string;
-  searchResults: Participant[];
-  searchLoading: boolean;
-  onSearch: (query: string) => void;
+  allParticipants: Participant[];
+  participantsLoading: boolean;
   onAdd: (participantId: number, formData: Partial<ParticipantStageCreate>) => void;
   onClose: () => void;
   stageStartDate: string;
@@ -406,29 +472,27 @@ interface AddParticipantModalProps {
 }
 
 const AddParticipantModal: React.FC<AddParticipantModalProps> = ({
-  searchQuery,
-  searchResults,
-  searchLoading,
-  onSearch,
+  allParticipants,
+  participantsLoading,
   onAdd,
   onClose,
   stageStartDate,
   stageEndDate
 }) => {
-  const [selectedParticipant, setSelectedParticipant] = useState<Participant | null>(null);
+  const [selectedParticipantId, setSelectedParticipantId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     arrivalDate: stageStartDate,
-    arrivalTime: '',
+    arrivalTime: '00:00',
     departureDate: stageEndDate,
-    departureTime: '',
+    departureTime: '00:00',
     role: 'participant' as const,
     notes: ''
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedParticipant) {
-      onAdd(selectedParticipant.id, formData);
+    if (selectedParticipantId) {
+      onAdd(selectedParticipantId, formData);
     }
   };
 
@@ -440,59 +504,40 @@ const AddParticipantModal: React.FC<AddParticipantModalProps> = ({
           <button onClick={onClose} className="modal-close">&times;</button>
         </div>
         <div className="modal-body">
-          {!selectedParticipant ? (
-            <>
-              <div className="search-section">
-                <label>Rechercher un participant existant</label>
-                <div className="search-input-container">
-                  <input
-                    type="text"
-                    placeholder="Nom, prénom ou email..."
-                    value={searchQuery}
-                    onChange={(e) => onSearch(e.target.value)}
-                    autoFocus
-                  />
-                  {searchLoading && <span className="search-spinner"></span>}
+          <form onSubmit={handleSubmit}>
+            <div className="form-group">
+              <label>Sélectionner un participant *</label>
+              {participantsLoading ? (
+                <div style={{ padding: '1rem', textAlign: 'center' }}>
+                  <span className="spinner"></span>
+                  <p>Chargement des participants...</p>
                 </div>
-              </div>
-
-              {searchResults.length > 0 && (
-                <div className="search-results">
-                  {searchResults.map((p) => (
-                    <div
-                      key={p.id}
-                      className="search-result-item"
-                      onClick={() => setSelectedParticipant(p)}
-                    >
-                      <div className="result-info">
-                        <strong>{p.firstName} {p.lastName}</strong>
-                        <small>{p.email}</small>
-                      </div>
-                      <div className="result-meta">
-                        <span>{p.nationality || 'N/A'}</span>
-                        <span>{p.stageCount || 0} événement(s)</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {searchQuery.length >= 2 && searchResults.length === 0 && !searchLoading && (
+              ) : allParticipants.length === 0 ? (
                 <div className="no-results">
-                  <p>Aucun participant trouvé</p>
-                  <small>Créez d'abord le participant dans la section "Participants"</small>
+                  <p>Aucun participant disponible</p>
+                  <small>Créez d'abord des participants dans la section "Participants"</small>
                 </div>
+              ) : (
+                <select
+                  className="form-control"
+                  value={selectedParticipantId || ''}
+                  onChange={(e) => setSelectedParticipantId(Number(e.target.value))}
+                  style={{ width: '100%', padding: '0.75rem', fontSize: '1rem', borderRadius: '4px', border: '1px solid #ddd' }}
+                  required
+                  autoFocus
+                >
+                  <option value="">-- Choisir un participant --</option>
+                  {allParticipants.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.firstName} {p.lastName} - {p.email} ({p.nationality || 'N/A'})
+                    </option>
+                  ))}
+                </select>
               )}
-            </>
-          ) : (
-            <form onSubmit={handleSubmit}>
-              <div className="selected-participant">
-                <span>Participant sélectionné:</span>
-                <strong>{selectedParticipant.firstName} {selectedParticipant.lastName}</strong>
-                <button type="button" onClick={() => setSelectedParticipant(null)}>
-                  Changer
-                </button>
-              </div>
+            </div>
+
+            {selectedParticipantId && (
+              <>
 
               <div className="form-row">
                 <div className="form-group">
@@ -559,12 +604,13 @@ const AddParticipantModal: React.FC<AddParticipantModalProps> = ({
                 <button type="button" onClick={onClose} className="btn btn-secondary">
                   Annuler
                 </button>
-                <button type="submit" className="btn btn-primary">
+                <button type="submit" className="btn btn-primary" disabled={!selectedParticipantId}>
                   Ajouter
                 </button>
               </div>
-            </form>
-          )}
+            </>
+            )}
+          </form>
         </div>
       </div>
     </div>

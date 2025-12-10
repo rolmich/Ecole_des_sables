@@ -74,9 +74,12 @@ def validate_assignment(
         }
     
     # Règle 2: Vérifier que le participant appartient au stage
-    if stage not in participant.stages.all():
-        participant_stages = [s.name for s in participant.stages.all()]
-        if len(participant_stages) == 0:
+    participant_stage_registrations = ParticipantStage.objects.filter(participant=participant)
+    participant_stages = [ps.stage for ps in participant_stage_registrations]
+
+    if stage not in participant_stages:
+        participant_stage_names = [s.name for s in participant_stages]
+        if len(participant_stage_names) == 0:
             return False, f"⚠️ PAS DE STAGE: {participant.full_name} n'est inscrit à AUCUN stage. Vous devez d'abord inscrire cette personne à un stage de formation avant de pouvoir lui attribuer une chambre.", {
                 'code': 'PARTICIPANT_NOT_IN_STAGE',
                 'participant': participant.full_name,
@@ -84,11 +87,11 @@ def validate_assignment(
                 'participant_stages': []
             }
         else:
-            return False, f"⚠️ MAUVAIS STAGE: {participant.full_name} n'est PAS inscrit au stage '{stage.name}'. Cette personne est inscrite aux stages: {', '.join(participant_stages)}. Vous devez l'assigner pour un de SES stages, pas pour un autre stage.", {
+            return False, f"⚠️ MAUVAIS STAGE: {participant.full_name} n'est PAS inscrit au stage '{stage.name}'. Cette personne est inscrite aux stages: {', '.join(participant_stage_names)}. Vous devez l'assigner pour un de SES stages, pas pour un autre stage.", {
                 'code': 'PARTICIPANT_NOT_IN_STAGE',
                 'participant': participant.full_name,
                 'stage_requested': stage.name,
-                'participant_stages': participant_stages
+                'participant_stages': participant_stage_names
             }
     
     # Obtenir les dates d'assignation basées sur le stage
@@ -130,17 +133,18 @@ def validate_assignment(
                 existing.assignment_start_date, existing.assignment_end_date
             ):
                 # Vérifier que c'est le même stage
-                existing_stages = existing.stages.all()
-                
+                existing_stage_registrations = ParticipantStage.objects.filter(participant=existing)
+                existing_stages = [ps.stage for ps in existing_stage_registrations]
+
                 # Trouver le stage de l'assignation existante
                 # On suppose que l'assignation est pour le stage correspondant aux dates
                 existing_stage = None
                 for es in existing_stages:
-                    if (es.start_date == existing.assignment_start_date and 
+                    if (es.start_date == existing.assignment_start_date and
                         es.end_date == existing.assignment_end_date):
                         existing_stage = es
                         break
-                
+
                 if existing_stage and existing_stage != stage:
                     return False, f"🚫 STAGES DIFFÉRENTS: Ce bungalow {bungalow.name} est déjà réservé pour le stage '{existing_stage.name}' (avec {existing.full_name}) du {existing.assignment_start_date.strftime('%d/%m')} au {existing.assignment_end_date.strftime('%d/%m')}. Vous ne pouvez PAS mélanger des participants de STAGES DIFFÉRENTS dans la même chambre pendant la même période. Le stage '{stage.name}' doit avoir ses propres chambres séparées.", {
                         'code': 'DIFFERENT_STAGES_NOT_ALLOWED',
@@ -249,25 +253,29 @@ def get_bungalow_availability(bungalow: Bungalow, start_date: date, end_date: da
     """
     occupied_beds = set()
     assignments = []
-    
+
     # Récupérer tous les participants assignés pendant cette période
     participants_in_period = Participant.objects.filter(
         assigned_bungalow=bungalow,
         assignment_start_date__lte=end_date,
         assignment_end_date__gte=start_date
     )
-    
+
     for p in participants_in_period:
         if p.assigned_bed:
             occupied_beds.add(p.assigned_bed)
+            # Récupérer les stages via ParticipantStage
+            p_stage_registrations = ParticipantStage.objects.filter(participant=p)
+            p_stages = [ps.stage.name for ps in p_stage_registrations]
+
             assignments.append({
                 'participant': p.full_name,
                 'bed': p.assigned_bed,
                 'gender': p.get_gender_display(),
                 'period': f"{p.assignment_start_date} - {p.assignment_end_date}",
-                'stages': [s.name for s in p.stages.all()]
+                'stages': p_stages
             })
-    
+
     available_beds = []
     for bed in bungalow.beds:
         bed_id = bed.get('id')
@@ -276,7 +284,7 @@ def get_bungalow_availability(bungalow: Bungalow, start_date: date, end_date: da
                 'id': bed_id,
                 'type': bed.get('type')
             })
-    
+
     return {
         'bungalow': bungalow.name,
         'village': bungalow.village.name,
@@ -288,180 +296,517 @@ def get_bungalow_availability(bungalow: Bungalow, start_date: date, end_date: da
         'is_full': len(occupied_beds) >= bungalow.capacity
     }
 
-class ParticipantType:
-    STUDENT = "Eleve"
-    TEACHER = "Enseignant"
-    STAFF = "Salarie"
-    RESIDENT = "Resident"
 
-class BedType:
-    SINGLE = "simple"
-    DOUBLE = "double"
+# ========== ASSIGNATION AUTOMATIQUE ==========
 
-# --- Automatic Assignment Helper Functions ---
+from .models import ParticipantStage
 
-# Note: The existing functions 'check_date_overlap', 
-# 'get_participant_assignment_dates', and 'validate_assignment' (which enforces 
-# gender, stage, and overlap rules) are reused here.
-
-def find_best_bed_for_teacher_or_staff(
-    participant: 'Participant', 
-    stage: 'Stage', 
-    all_bungalows: List['Bungalow'], 
-    is_teacher: bool
-) -> Optional[Tuple['Bungalow', str]]:
+def get_bungalow_occupants_for_stage(bungalow: Bungalow, stage: Stage) -> List:
     """
-    Finds the best bungalow and bed for a single-occupancy assignment.
-    Priority: Double bed (for teacher), then any single/double bed (for staff).
+    Retourne tous les participants assignés à un bungalow pour un stage donné.
     """
-    
-    target_bed_type = BedType.DOUBLE if is_teacher else None
+    from .models import ParticipantStage
 
-    # Try to find a completely free room first (for exclusivity)
+    assignment_start, assignment_end = stage.start_date, stage.end_date
+
+    # Récupérer les inscriptions au stage qui sont assignées à ce bungalow
+    registrations = ParticipantStage.objects.filter(
+        stage=stage,
+        assigned_bungalow=bungalow
+    ).select_related('participant')
+
+    return [reg.participant for reg in registrations]
+
+
+def find_best_bed_for_instructor(
+    registration: 'ParticipantStage',
+    stage: Stage,
+    all_bungalows: List[Bungalow]
+) -> Optional[Tuple[Bungalow, str]]:
+    """
+    Trouve le meilleur bungalow et lit pour un encadrant.
+
+    Règles:
+    - SEUL dans sa chambre (chambre individuelle obligatoire)
+    - Priorité aux chambres avec WC/salle de bain privée
+    - Priorité au lit double si disponible
+
+    Args:
+        registration: L'inscription (ParticipantStage) de l'encadrant
+        stage: Le stage concerné
+        all_bungalows: Liste de tous les bungalows disponibles
+
+    Returns:
+        Tuple[Bungalow, bed_id] ou None si aucun lit approprié n'est trouvé
+    """
+    participant = registration.participant
+
+    # Priorité 1: Chercher un bungalow vide avec salle de bain privée + lit double
     for bungalow in all_bungalows:
-        assignment_start, assignment_end = get_participant_assignment_dates(participant, stage)
-        
-        # Check if the bungalow is empty during the period
-        # In a real Django setup, this would be an expensive query:
-        occupants = bungalow.get_current_occupants(assignment_start, assignment_end) 
-        if occupants:
-            continue # We want an empty room for priority 1 and 2
+        bungalow.refresh_from_db()
+        occupied_bed_ids = {bed.get('id') for bed in bungalow.beds if bed.get('occupiedBy') is not None}
 
-        for bed in bungalow.beds:
-            bed_id = bed.get('id')
-            bed_type = bed.get('type')
-            
-            # 1. Double bed required for teachers
-            if is_teacher and bed_type != target_bed_type:
-                continue
+        if len(occupied_bed_ids) == 0:  # Bungalow vide (SEUL)
+            has_private_bathroom = 'private_bathroom' in bungalow.amenities
 
-            # 2. Single or double bed for staff (Any valid bed)
-            if not is_teacher and bed_type not in [BedType.SINGLE, BedType.DOUBLE]:
-                continue
-                
-            # Check basic validity (gender, stage, overlap - though overlap 
-            # shouldn't fail if the room is empty)
-            is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
-            
-            if is_valid:
-                return bungalow, bed_id
+            if has_private_bathroom:
+                # Chercher un lit double
+                for bed in bungalow.beds:
+                    bed_id = bed.get('id')
+                    bed_type = bed.get('type')
 
-    return None
+                    if bed_type == 'double':
+                        is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                        if is_valid:
+                            return bungalow, bed_id
 
-def find_best_bed_for_student(
-    participant: 'Participant', 
-    stage: 'Stage', 
-    all_bungalows: List['Bungalow']
-) -> Optional[Tuple['Bungalow', str]]:
-    """
-    Finds the best bed for a student, prioritizing fill optimization.
-    Priority:
-    1. Bungalow already occupied by a student of the same stage/gender, with an available single bed.
-    2. New, empty bungalow.
-    """
-    assignment_start, assignment_end = get_participant_assignment_dates(participant, stage)
-    
-    # 1. Search for a PARTIALLY filled bungalow (Optimization step)
+    # Priorité 2: Bungalow vide avec salle de bain privée (n'importe quel lit)
     for bungalow in all_bungalows:
-        occupants = bungalow.get_current_occupants(assignment_start, assignment_end)
-        
-        if occupants:
-            # Check if at least one occupant is compatible (same stage, same gender)
-            compatible_occupant = next(
-                (
-                    o for o in occupants 
-                    if o.gender == participant.gender and 
-                       o.stages_all() and any(s.name == stage.name for s in o.stages_all()) # Check same stage
-                ), 
-                None
-            )
-            
-            if compatible_occupant:
-                # Check the max capacity constraint for this specific stage
-                if len(occupants) < stage.max_students_per_room:
-                    # Find the first available single bed
-                    for bed in bungalow.beds:
-                        bed_id = bed.get('id')
-                        # Ensure the bed is not already occupied
-                        if not any(o.assigned_bed == bed_id for o in occupants):
-                            # The validation function handles all remaining checks (overlap on bed)
-                            is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
-                            if is_valid:
-                                return bungalow, bed_id
+        bungalow.refresh_from_db()
+        occupied_bed_ids = {bed.get('id') for bed in bungalow.beds if bed.get('occupiedBy') is not None}
 
-    # 2. Search for a NEW bungalow (empty)
+        if len(occupied_bed_ids) == 0:  # Bungalow vide (SEUL)
+            has_private_bathroom = 'private_bathroom' in bungalow.amenities
+
+            if has_private_bathroom:
+                for bed in bungalow.beds:
+                    bed_id = bed.get('id')
+                    is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                    if is_valid:
+                        return bungalow, bed_id
+
+    # Priorité 3: N'importe quel bungalow vide avec lit double
     for bungalow in all_bungalows:
-        # Check if the bungalow is empty during the period
-        if not bungalow.get_current_occupants(assignment_start, assignment_end):
-            # Find the first available single bed
+        bungalow.refresh_from_db()
+        occupied_bed_ids = {bed.get('id') for bed in bungalow.beds if bed.get('occupiedBy') is not None}
+
+        if len(occupied_bed_ids) == 0:  # Bungalow vide (SEUL)
+            for bed in bungalow.beds:
+                bed_id = bed.get('id')
+                bed_type = bed.get('type')
+
+                if bed_type == 'double':
+                    is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                    if is_valid:
+                        return bungalow, bed_id
+
+    # Priorité 4: N'importe quel bungalow vide
+    for bungalow in all_bungalows:
+        bungalow.refresh_from_db()
+        occupied_bed_ids = {bed.get('id') for bed in bungalow.beds if bed.get('occupiedBy') is not None}
+
+        if len(occupied_bed_ids) == 0:  # Bungalow vide (SEUL)
             for bed in bungalow.beds:
                 bed_id = bed.get('id')
                 is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
                 if is_valid:
                     return bungalow, bed_id
-                    
+
     return None
 
 
-def assign_participants_automatically(
-    participants_to_assign: List['Participant'], 
-    stage: 'Stage', 
-    all_bungalows: List['Bungalow']
+def find_best_bed_for_musician(
+    registration: 'ParticipantStage',
+    stage: Stage,
+    all_bungalows: List[Bungalow]
+) -> Optional[Tuple[Bungalow, str]]:
+    """
+    Trouve le meilleur bungalow et lit pour un musicien.
+
+    Règles:
+    - Musiciens ensemble (peuvent partager)
+    - Priorité au Village C (chambres avec douche intégrée = private_bathroom)
+    - Optimiser l'utilisation des lits (remplir les chambres existantes d'abord)
+    - Utiliser les lits doubles si disponibles
+    """
+    participant = registration.participant
+
+    # Priorité 1: Remplir une chambre déjà occupée par des musiciens (même genre) dans Village C
+    village_c_bungalows = [b for b in all_bungalows if b.village.name == 'C']
+
+    for bungalow in village_c_bungalows:
+        bungalow.refresh_from_db()
+        occupied_bed_ids = {bed.get('id') for bed in bungalow.beds if bed.get('occupiedBy') is not None}
+
+        if 0 < len(occupied_bed_ids) < bungalow.capacity:  # Partiellement rempli
+            # Vérifier que ce sont des musiciens du même genre
+            occupants = get_bungalow_occupants_for_stage(bungalow, stage)
+
+            # Vérifier le rôle des occupants
+            musician_occupants = [o for o in occupants if ParticipantStage.objects.filter(
+                participant=o, stage=stage, role='musician'
+            ).exists()]
+
+            if musician_occupants and all(o.gender == participant.gender for o in musician_occupants):
+                # Chercher un lit double d'abord, sinon single
+                for bed in sorted(bungalow.beds, key=lambda b: 0 if b.get('type') == 'double' else 1):
+                    bed_id = bed.get('id')
+                    if bed_id not in occupied_bed_ids:
+                        is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                        if is_valid:
+                            return bungalow, bed_id
+
+    # Priorité 2: Nouveau bungalow vide dans Village C
+    for bungalow in village_c_bungalows:
+        bungalow.refresh_from_db()
+        occupied_bed_ids = {bed.get('id') for bed in bungalow.beds if bed.get('occupiedBy') is not None}
+
+        if len(occupied_bed_ids) == 0:  # Bungalow vide
+            # Chercher un lit double d'abord
+            for bed in sorted(bungalow.beds, key=lambda b: 0 if b.get('type') == 'double' else 1):
+                bed_id = bed.get('id')
+                is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                if is_valid:
+                    return bungalow, bed_id
+
+    # Priorité 3: Si Village C plein, chercher ailleurs avec private_bathroom
+    for bungalow in all_bungalows:
+        if bungalow.village.name == 'C':
+            continue  # Déjà vérifié
+
+        if 'private_bathroom' in bungalow.amenities:
+            bungalow.refresh_from_db()
+            occupied_bed_ids = {bed.get('id') for bed in bungalow.beds if bed.get('occupiedBy') is not None}
+
+            # Remplir une chambre existante avec des musiciens
+            if 0 < len(occupied_bed_ids) < bungalow.capacity:
+                occupants = get_bungalow_occupants_for_stage(bungalow, stage)
+                musician_occupants = [o for o in occupants if ParticipantStage.objects.filter(
+                    participant=o, stage=stage, role='musician'
+                ).exists()]
+
+                if musician_occupants and all(o.gender == participant.gender for o in musician_occupants):
+                    for bed in sorted(bungalow.beds, key=lambda b: 0 if b.get('type') == 'double' else 1):
+                        bed_id = bed.get('id')
+                        if bed_id not in occupied_bed_ids:
+                            is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                            if is_valid:
+                                return bungalow, bed_id
+
+            # Nouveau bungalow vide
+            if len(occupied_bed_ids) == 0:
+                for bed in sorted(bungalow.beds, key=lambda b: 0 if b.get('type') == 'double' else 1):
+                    bed_id = bed.get('id')
+                    is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                    if is_valid:
+                        return bungalow, bed_id
+
+    return None
+
+
+def find_best_bed_for_participant(
+    registration: 'ParticipantStage',
+    stage: Stage,
+    all_bungalows: List[Bungalow]
+) -> Optional[Tuple[Bungalow, str]]:
+    """
+    Trouve le meilleur bungalow et lit pour un participant/étudiant.
+
+    Règles:
+    - Étudiants ensemble (peuvent partager)
+    - SÉPARÉS des musiciens et encadrants
+    - Optimiser l'utilisation des lits (remplir les chambres existantes)
+    - Utiliser les lits doubles si disponibles
+    - Éviter Village C (réservé aux musiciens de préférence)
+    """
+    participant = registration.participant
+
+    # Priorité 1: Remplir une chambre déjà occupée par des étudiants (même genre)
+    for bungalow in all_bungalows:
+        bungalow.refresh_from_db()
+        occupied_bed_ids = {bed.get('id') for bed in bungalow.beds if bed.get('occupiedBy') is not None}
+
+        if 0 < len(occupied_bed_ids) < bungalow.capacity:  # Partiellement rempli
+            occupants = get_bungalow_occupants_for_stage(bungalow, stage)
+
+            # Vérifier que ce sont des participants/étudiants (pas musiciens ou encadrants)
+            student_occupants = [o for o in occupants if ParticipantStage.objects.filter(
+                participant=o, stage=stage, role='participant'
+            ).exists()]
+
+            if student_occupants and all(o.gender == participant.gender for o in student_occupants):
+                # Chercher un lit double d'abord, sinon single
+                for bed in sorted(bungalow.beds, key=lambda b: 0 if b.get('type') == 'double' else 1):
+                    bed_id = bed.get('id')
+                    if bed_id not in occupied_bed_ids:
+                        is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                        if is_valid:
+                            return bungalow, bed_id
+
+    # Priorité 2: Nouveau bungalow vide (éviter Village C)
+    # D'abord villages A et B
+    preferred_villages = ['A', 'B']
+    for village_name in preferred_villages:
+        village_bungalows = [b for b in all_bungalows if b.village.name == village_name]
+
+        for bungalow in village_bungalows:
+            bungalow.refresh_from_db()
+            occupied_bed_ids = {bed.get('id') for bed in bungalow.beds if bed.get('occupiedBy') is not None}
+
+            if len(occupied_bed_ids) == 0:  # Bungalow vide
+                # Chercher un lit double d'abord
+                for bed in sorted(bungalow.beds, key=lambda b: 0 if b.get('type') == 'double' else 1):
+                    bed_id = bed.get('id')
+                    is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                    if is_valid:
+                        return bungalow, bed_id
+
+    # Priorité 3: Si villages A et B pleins, utiliser n'importe quel bungalow vide
+    for bungalow in all_bungalows:
+        bungalow.refresh_from_db()
+        occupied_bed_ids = {bed.get('id') for bed in bungalow.beds if bed.get('occupiedBy') is not None}
+
+        if len(occupied_bed_ids) == 0:  # Bungalow vide
+            for bed in sorted(bungalow.beds, key=lambda b: 0 if b.get('type') == 'double' else 1):
+                bed_id = bed.get('id')
+                is_valid, _, _ = validate_assignment(participant, bungalow, bed_id, stage)
+                if is_valid:
+                    return bungalow, bed_id
+
+    return None
+
+
+def assign_participants_automatically_for_stage(
+    stage: Stage,
+    all_bungalows: Optional[List[Bungalow]] = None
 ) -> Dict[str, List[Dict]]:
     """
-    Optimized automatic assignment of participants for a given stage.
-    """
-    
-    results = {'success': [], 'failure': []}
-    
-    # --- 1. SEPARATE GROUPS FOR PRIORITIZATION ---
-    teachers = [p for p in participants_to_assign if p.p_type == ParticipantType.TEACHER]
-    staff = [p for p in participants_to_assign if p.p_type == ParticipantType.STAFF]
-    students_and_residents = [p for p in participants_to_assign if p.p_type in [ParticipantType.STUDENT, ParticipantType.RESIDENT]]
-    
-    # --- 2. PRIORITY 1: TEACHERS (Individual room, Double bed) ---
-    for p in teachers:
-        assignment = find_best_bed_for_teacher_or_staff(p, stage, all_bungalows, is_teacher=True)
-        if assignment:
-            bungalow, bed_id = assignment
-            success, message, details = assign_participant_to_bungalow(p, bungalow, bed_id, stage)
-            if success:
-                results['success'].append(details)
-            else:
-                results['failure'].append({'participant': p.full_name, 'reason': message, 'details': details})
-        else:
-            results['failure'].append({'participant': p.full_name, 'reason': "No suitable individual room/double bed found for the teacher."})
-            
-    # --- 3. PRIORITY 2: STAFF / REINFORCEMENTS (Individual room) ---
-    for p in staff:
-        assignment = find_best_bed_for_teacher_or_staff(p, stage, all_bungalows, is_teacher=False)
-        if assignment:
-            bungalow, bed_id = assignment
-            success, message, details = assign_participant_to_bungalow(p, bungalow, bed_id, stage)
-            if success:
-                results['success'].append(details)
-            else:
-                results['failure'].append({'participant': p.full_name, 'reason': message, 'details': details})
-        else:
-            results['failure'].append({'participant': p.full_name, 'reason': "No suitable individual room found for the staff member."})
+    Assigne automatiquement tous les participants non assignés d'un stage aux bungalows.
 
-    # --- 4. PRIORITY 3: STUDENTS / RESIDENTS (Fill Optimization) ---
-    
-    # Sort students for better cohabitation grouping (Optimization: Greedy Approach)
-    # Sort key: (gender, language, age_group)
-    students_and_residents.sort(key=lambda p: (p.gender, p.language, p.age_group))
-    
-    for p in students_and_residents:
-        assignment = find_best_bed_for_student(p, stage, all_bungalows)
+    Logique d'assignation par priorité:
+    1. Encadrants (instructors) → chambre individuelle + lit double si possible
+    2. Staff → chambre individuelle si possible
+    3. Musiciens → comme les participants
+    4. Participants → optimisation du remplissage (regrouper par genre)
+
+    Args:
+        stage: Le stage pour lequel assigner les participants
+        all_bungalows: Liste des bungalows (si None, récupère tous les bungalows)
+
+    Returns:
+        Dict avec 'success' (liste des assignations réussies) et 'failure' (liste des échecs)
+    """
+    if all_bungalows is None:
+        all_bungalows = list(Bungalow.objects.all().select_related('village'))
+
+    results = {'success': [], 'failure': []}
+
+    # Récupérer toutes les inscriptions non assignées pour ce stage
+    unassigned_registrations = ParticipantStage.objects.filter(
+        stage=stage,
+        assigned_bungalow__isnull=True
+    ).select_related('participant').order_by('role', 'participant__gender', 'participant__age')
+
+    # Séparer par rôle
+    instructors = [r for r in unassigned_registrations if r.role == 'instructor']
+    staff = [r for r in unassigned_registrations if r.role == 'staff']
+    musicians = [r for r in unassigned_registrations if r.role == 'musician']
+    participants = [r for r in unassigned_registrations if r.role == 'participant']
+
+    # Priorité 1: Encadrants
+    for registration in instructors:
+        assignment = find_best_bed_for_instructor(registration, stage, all_bungalows)
         if assignment:
             bungalow, bed_id = assignment
-            # Assign the participant
-            success, message, details = assign_participant_to_bungalow(p, bungalow, bed_id, stage)
-            if success:
-                results['success'].append(details)
-            else:
-                results['failure'].append({'participant': p.full_name, 'reason': message, 'details': details})
+            participant = registration.participant
+
+            # Assigner via ParticipantStage
+            registration.assigned_bungalow = bungalow
+            registration.assigned_bed = bed_id
+            registration.save()
+
+            # Mettre à jour le lit du bungalow
+            start_date = registration.effective_arrival_date
+            end_date = registration.effective_departure_date
+
+            for bed in bungalow.beds:
+                if bed.get('id') == bed_id:
+                    bed['occupiedBy'] = {
+                        'registrationId': registration.id,
+                        'participantId': participant.id,
+                        'name': participant.full_name,
+                        'gender': participant.gender,
+                        'age': participant.age if participant.age else None,
+                        'nationality': participant.nationality if participant.nationality else None,
+                        'languages': [lang.name for lang in participant.languages.all()] if participant.languages.exists() else [],
+                        'role': registration.role,
+                        'startDate': str(start_date),
+                        'startTime': str(registration.arrival_time) if registration.arrival_time else '',
+                        'endDate': str(end_date),
+                        'endTime': str(registration.departure_time) if registration.departure_time else '',
+                        'stageName': stage.name
+                    }
+                    break
+            bungalow.save()
+            bungalow.update_occupancy()
+
+            results['success'].append({
+                'participant': registration.participant.full_name,
+                'role': 'Encadrant',
+                'bungalow': bungalow.name,
+                'village': bungalow.village.name,
+                'bed': bed_id,
+                'stage': stage.name
+            })
         else:
-            results['failure'].append({'participant': p.full_name, 'reason': "No available bed found for the student while respecting all constraints. External housing may be required."})
-            
+            results['failure'].append({
+                'participant': registration.participant.full_name,
+                'role': 'Encadrant',
+                'reason': "Aucune chambre individuelle avec lit double disponible"
+            })
+
+    # Priorité 2: Musiciens (village C avec douche)
+    for registration in musicians:
+        assignment = find_best_bed_for_musician(registration, stage, all_bungalows)
+        if assignment:
+            bungalow, bed_id = assignment
+            participant = registration.participant
+
+            registration.assigned_bungalow = bungalow
+            registration.assigned_bed = bed_id
+            registration.save()
+
+            # Mettre à jour le lit du bungalow
+            start_date = registration.effective_arrival_date
+            end_date = registration.effective_departure_date
+
+            for bed in bungalow.beds:
+                if bed.get('id') == bed_id:
+                    bed['occupiedBy'] = {
+                        'registrationId': registration.id,
+                        'participantId': participant.id,
+                        'name': participant.full_name,
+                        'gender': participant.gender,
+                        'age': participant.age if participant.age else None,
+                        'nationality': participant.nationality if participant.nationality else None,
+                        'languages': [lang.name for lang in participant.languages.all()] if participant.languages.exists() else [],
+                        'role': registration.role,
+                        'startDate': str(start_date),
+                        'startTime': str(registration.arrival_time) if registration.arrival_time else '',
+                        'endDate': str(end_date),
+                        'endTime': str(registration.departure_time) if registration.departure_time else '',
+                        'stageName': stage.name
+                    }
+                    break
+            bungalow.save()
+            bungalow.update_occupancy()
+
+            results['success'].append({
+                'participant': registration.participant.full_name,
+                'role': 'Musicien',
+                'bungalow': bungalow.name,
+                'village': bungalow.village.name,
+                'bed': bed_id,
+                'stage': stage.name
+            })
+        else:
+            results['failure'].append({
+                'participant': registration.participant.full_name,
+                'role': 'Musicien',
+                'reason': "Aucune chambre avec douche disponible"
+            })
+
+    # Priorité 3: Staff
+    for registration in staff:
+        assignment = find_best_bed_for_instructor(registration, stage, all_bungalows)  # Même traitement que les encadrants
+        if assignment:
+            bungalow, bed_id = assignment
+            participant = registration.participant
+
+            registration.assigned_bungalow = bungalow
+            registration.assigned_bed = bed_id
+            registration.save()
+
+            # Mettre à jour le lit du bungalow
+            start_date = registration.effective_arrival_date
+            end_date = registration.effective_departure_date
+
+            for bed in bungalow.beds:
+                if bed.get('id') == bed_id:
+                    bed['occupiedBy'] = {
+                        'registrationId': registration.id,
+                        'participantId': participant.id,
+                        'name': participant.full_name,
+                        'gender': participant.gender,
+                        'age': participant.age if participant.age else None,
+                        'nationality': participant.nationality if participant.nationality else None,
+                        'languages': [lang.name for lang in participant.languages.all()] if participant.languages.exists() else [],
+                        'role': registration.role,
+                        'startDate': str(start_date),
+                        'startTime': str(registration.arrival_time) if registration.arrival_time else '',
+                        'endDate': str(end_date),
+                        'endTime': str(registration.departure_time) if registration.departure_time else '',
+                        'stageName': stage.name
+                    }
+                    break
+            bungalow.save()
+            bungalow.update_occupancy()
+
+            results['success'].append({
+                'participant': registration.participant.full_name,
+                'role': 'Staff',
+                'bungalow': bungalow.name,
+                'village': bungalow.village.name,
+                'bed': bed_id,
+                'stage': stage.name
+            })
+        else:
+            results['failure'].append({
+                'participant': registration.participant.full_name,
+                'role': 'Staff',
+                'reason': "Aucune chambre individuelle disponible"
+            })
+
+    # Priorité 4: Participants/Étudiants (optimisation de remplissage)
+    for registration in participants:
+        assignment = find_best_bed_for_participant(registration, stage, all_bungalows)
+        if assignment:
+            bungalow, bed_id = assignment
+            participant = registration.participant
+
+            registration.assigned_bungalow = bungalow
+            registration.assigned_bed = bed_id
+            registration.save()
+
+            # Mettre à jour le lit du bungalow
+            start_date = registration.effective_arrival_date
+            end_date = registration.effective_departure_date
+
+            for bed in bungalow.beds:
+                if bed.get('id') == bed_id:
+                    bed['occupiedBy'] = {
+                        'registrationId': registration.id,
+                        'participantId': participant.id,
+                        'name': participant.full_name,
+                        'gender': participant.gender,
+                        'age': participant.age if participant.age else None,
+                        'nationality': participant.nationality if participant.nationality else None,
+                        'languages': [lang.name for lang in participant.languages.all()] if participant.languages.exists() else [],
+                        'role': registration.role,
+                        'startDate': str(start_date),
+                        'startTime': str(registration.arrival_time) if registration.arrival_time else '',
+                        'endDate': str(end_date),
+                        'endTime': str(registration.departure_time) if registration.departure_time else '',
+                        'stageName': stage.name
+                    }
+                    break
+            bungalow.save()
+            bungalow.update_occupancy()
+
+            results['success'].append({
+                'participant': registration.participant.full_name,
+                'role': 'Participant',
+                'bungalow': bungalow.name,
+                'village': bungalow.village.name,
+                'bed': bed_id,
+                'stage': stage.name
+            })
+        else:
+            results['failure'].append({
+                'participant': registration.participant.full_name,
+                'role': 'Participant',
+                'reason': "Aucun lit disponible respectant toutes les contraintes (genre, capacité, chevauchement)"
+            })
+
     return results
+

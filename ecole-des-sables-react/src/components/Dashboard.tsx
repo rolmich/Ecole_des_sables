@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import apiService from '../services/api';
 import PageHeader from './PageHeader';
+import AlertModal from './AlertModal';
 
 // Types pour les statistiques du dashboard
 interface DashboardStats {
@@ -113,6 +114,12 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [networkInfo, setNetworkInfo] = useState<{ ip: string; url: string } | null>(null);
+  const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string; type: 'success' | 'info' | 'warning' | 'error' }>({
+    isOpen: false,
+    message: '',
+    type: 'info'
+  });
 
   // Charger les statistiques
   const loadStats = async () => {
@@ -129,10 +136,33 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  // Récupérer l'IP réseau depuis le backend
+  const fetchNetworkInfo = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/network-info/');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.local_ip && data.local_ip !== '127.0.0.1') {
+          setNetworkInfo({
+            ip: data.local_ip,
+            url: `http://${data.local_ip}:3000`
+          });
+        }
+      }
+    } catch (err) {
+      // Pas d'erreur si l'endpoint n'existe pas encore
+      console.log('Network info not available');
+    }
+  };
+
   useEffect(() => {
     loadStats();
+    fetchNetworkInfo();
     // Rafraîchir toutes les 5 minutes
-    const interval = setInterval(loadStats, 5 * 60 * 1000);
+    const interval = setInterval(() => {
+      loadStats();
+      fetchNetworkInfo();
+    }, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -314,6 +344,92 @@ const Dashboard: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Info d'accès réseau - Afficher si machine connectée à un réseau WiFi */}
+        {networkInfo && (
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '12px',
+            padding: '1rem',
+            marginBottom: '1.5rem',
+            border: '2px solid #6366F1',
+            boxShadow: '0 4px 6px rgba(99, 102, 241, 0.1)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div style={{
+                backgroundColor: '#EEF2FF',
+                borderRadius: '8px',
+                padding: '0.75rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <i className="fas fa-wifi" style={{ fontSize: '1.5rem', color: '#6366F1' }}></i>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '0.875rem', color: '#6B7280', marginBottom: '0.25rem' }}>
+                  Serveur accessible sur le réseau WiFi
+                </div>
+                <div style={{
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  color: '#1F2937',
+                  fontFamily: 'monospace'
+                }}>
+                  {networkInfo.url}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#6B7280', marginTop: '0.25rem' }}>
+                  IP du serveur: {networkInfo.ip}
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(networkInfo.url);
+                    setAlertModal({
+                      isOpen: true,
+                      message: 'URL copiée dans le presse-papiers !',
+                      type: 'success'
+                    });
+                  } catch (err) {
+                    console.error('Erreur lors de la copie:', err);
+                    setAlertModal({
+                      isOpen: true,
+                      message: 'Erreur lors de la copie. Veuillez réessayer.',
+                      type: 'error'
+                    });
+                  }
+                }}
+                style={{
+                  padding: '0.5rem 1rem',
+                  backgroundColor: '#6366F1',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  fontSize: '0.875rem'
+                }}
+                title="Copier l'URL"
+              >
+                <i className="fas fa-copy"></i>
+                Copier
+              </button>
+            </div>
+            <div style={{
+              marginTop: '0.75rem',
+              paddingTop: '0.75rem',
+              borderTop: '1px solid #E5E7EB',
+              fontSize: '0.75rem',
+              color: '#6B7280'
+            }}>
+              <i className="fas fa-info-circle" style={{ marginRight: '0.5rem' }}></i>
+              Partagez cette URL avec d'autres appareils pour qu'ils accèdent à l'application
+            </div>
+          </div>
+        )}
 
         {/* Alertes */}
         {stats.alerts.length > 0 && (
@@ -1274,6 +1390,14 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Alert Modal */}
+      <AlertModal
+        isOpen={alertModal.isOpen}
+        message={alertModal.message}
+        type={alertModal.type}
+        onClose={() => setAlertModal({ isOpen: false, message: '', type: 'info' })}
+      />
     </>
   );
 };

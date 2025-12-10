@@ -81,10 +81,15 @@ body {
     line-height: 1.6;
     color: var(--gray-800);
     background-color: var(--gray-50);
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 .App {
     min-height: 100vh;
+    overflow-x: hidden;
+    width: 100%;
 }
 
 /* Login Page Styles */
@@ -2001,6 +2006,12 @@ body {
     color: var(--success);
 }
 
+.bungalow-status.forced {
+    background: rgba(211, 47, 47, 0.1);
+    color: var(--primary-red);
+    font-weight: 700;
+}
+
 .bungalow-details {
     margin-bottom: var(--space-4);
 }
@@ -2400,6 +2411,12 @@ body {
     border-width: 3px;
 }
 
+.village-assignment:nth-child(1) .bungalow-assignment-card.forced {
+    border-color: var(--primary-red);
+    border-width: 3px;
+    background: rgba(211, 47, 47, 0.03);
+}
+
 /* Village B - Bleu */
 .village-assignment:nth-child(2) .bungalow-assignment-card.empty {
     border-color: var(--gray-300);
@@ -2416,6 +2433,12 @@ body {
     border-width: 3px;
 }
 
+.village-assignment:nth-child(2) .bungalow-assignment-card.forced {
+    border-color: var(--primary-red);
+    border-width: 3px;
+    background: rgba(211, 47, 47, 0.03);
+}
+
 /* Village C - Vert */
 .village-assignment:nth-child(3) .bungalow-assignment-card.empty {
     border-color: var(--gray-300);
@@ -2430,6 +2453,12 @@ body {
 .village-assignment:nth-child(3) .bungalow-assignment-card.full {
     border-color: var(--success);
     border-width: 3px;
+}
+
+.village-assignment:nth-child(3) .bungalow-assignment-card.forced {
+    border-color: var(--primary-red);
+    border-width: 3px;
+    background: rgba(211, 47, 47, 0.03);
 }
 
 .bungalow-assignment-header {
@@ -3496,53 +3525,205 @@ body {
     text-transform: capitalize;
 }
 
+/* Tablet devices (landscape) */
+@media (max-width: 1024px) {
+    .app-container {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        height: auto;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        box-shadow: var(--shadow-md);
+    }
+
+    .sidebar-header {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+        padding: var(--space-4);
+    }
+
+    .nav-menu {
+        display: flex;
+        flex-direction: row;
+        overflow-x: auto;
+        padding: 0 var(--space-4) var(--space-4);
+        gap: var(--space-2);
+    }
+
+    .nav-item {
+        min-width: auto;
+    }
+
+    .nav-link span {
+        display: none;
+    }
+
+    .sidebar-footer {
+        display: none;
+    }
+
+    .main-content {
+        margin-left: 0;
+        padding: var(--space-6);
+        width: 100%;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .overview-cards {
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--space-4);
+    }
+
+    .assignment-interface {
+        grid-template-columns: 1fr;
+    }
+
+    .participants-panel {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+
+    .bungalows-assignment-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .stages-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .actions-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .main-header {
+        flex-wrap: wrap;
+    }
+
+    .header-actions {
+        width: 100%;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
+}
+
+/* Mobile devices */
 @media (max-width: 768px) {
     .sidebar {
         width: 100%;
         position: relative;
         height: auto;
     }
-    
+
+    .sidebar-header {
+        flex-direction: row;
+        padding: var(--space-3);
+    }
+
+    .logo-text {
+        font-size: var(--font-size-sm);
+    }
+
+    .nav-menu {
+        flex-direction: row;
+        overflow-x: auto;
+        padding: var(--space-2);
+        gap: var(--space-1);
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .nav-item {
+        flex-shrink: 0;
+    }
+
+    .nav-link {
+        padding: var(--space-2) var(--space-3);
+        font-size: var(--font-size-sm);
+    }
+
+    .nav-link i {
+        font-size: var(--font-size-base);
+    }
+
+    .nav-link span {
+        display: none;
+    }
+
     .main-content {
         margin-left: 0;
         padding: var(--space-4);
     }
-    
+
     .stats-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .main-header {
         flex-direction: column;
         align-items: flex-start;
         gap: var(--space-4);
     }
-    
+
+    .main-header h1 {
+        font-size: var(--font-size-xl);
+    }
+
+    .header-actions {
+        width: 100%;
+        flex-direction: column;
+        gap: var(--space-2);
+    }
+
+    .header-actions > * {
+        width: 100%;
+    }
+
+    .assignment-controls {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .assignment-controls select,
+    .assignment-controls button {
+        width: 100%;
+    }
+
     .actions-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .stages-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .stage-info {
         grid-template-columns: 1fr;
     }
-    
+
     .search-bar input {
         width: 100%;
     }
-    
+
     .participants-table {
         font-size: var(--font-size-sm);
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
     }
-    
+
     .participants-table th,
     .participants-table td {
         padding: var(--space-2) var(--space-3);
+        white-space: nowrap;
     }
-    
+
     .bungalows-grid.grid {
         grid-template-columns: 1fr;
     }
@@ -3564,60 +3745,282 @@ body {
     .conflict-card {
         padding: var(--space-4);
     }
-    
+
     .village-header {
         flex-direction: column;
         align-items: flex-start;
         gap: var(--space-2);
     }
-    
+
     .village-info {
         align-items: flex-start;
     }
-    
+
     .bungalow-info {
         grid-template-columns: 1fr;
     }
-    
+
     .assignment-interface {
         grid-template-columns: 1fr;
         gap: var(--space-4);
     }
-    
+
     .overview-cards {
         grid-template-columns: 1fr;
+        gap: var(--space-3);
     }
-    
+
+    .overview-card {
+        padding: var(--space-4);
+    }
+
+    .overview-card h3 {
+        font-size: var(--font-size-xl);
+    }
+
+    .overview-card p {
+        font-size: var(--font-size-sm);
+    }
+
     .bungalows-assignment-grid {
         grid-template-columns: 1fr;
     }
-    
+
+    .bungalow-assignment-card {
+        padding: var(--space-4);
+    }
+
     .report-cards {
         grid-template-columns: 1fr;
     }
-    
+
     .preview-header {
         flex-direction: column;
         align-items: flex-start;
         gap: var(--space-4);
     }
-    
+
     .preview-actions {
         width: 100%;
         justify-content: flex-start;
+        flex-direction: column;
     }
-    
+
+    .preview-actions button {
+        width: 100%;
+    }
+
     .date-range {
         flex-direction: column;
         align-items: flex-start;
         gap: var(--space-2);
     }
-    
+
     .metrics-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .quick-stats .stats-grid {
         grid-template-columns: 1fr;
+    }
+
+    /* Assignments page specific */
+    .participants-list {
+        max-height: 300px;
+    }
+
+    .participant-card {
+        padding: var(--space-3);
+    }
+
+    .villages-container {
+        gap: var(--space-4);
+    }
+
+    .village-assignment h4 {
+        font-size: var(--font-size-base);
+    }
+
+    /* Modal responsiveness */
+    .modal {
+        max-width: 95%;
+        margin: var(--space-4);
+    }
+
+    .modal-form {
+        padding: var(--space-4);
+    }
+
+    /* Table responsiveness */
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Button groups */
+    .btn-group {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .btn-group button {
+        width: 100%;
+    }
+}
+
+/* Small mobile devices */
+@media (max-width: 480px) {
+    .main-content {
+        padding: var(--space-3);
+    }
+
+    .main-header h1 {
+        font-size: var(--font-size-lg);
+    }
+
+    .overview-card {
+        flex-direction: column;
+        text-align: center;
+        padding: var(--space-3);
+    }
+
+    .card-icon {
+        width: 48px;
+        height: 48px;
+    }
+
+    .card-content h3 {
+        font-size: var(--font-size-lg);
+    }
+
+    .card-content p {
+        font-size: 0.7rem;
+    }
+
+    .participant-card {
+        padding: var(--space-2);
+        font-size: var(--font-size-sm);
+    }
+
+    .bungalow-assignment-card {
+        padding: var(--space-3);
+    }
+
+    .bungalow-assignment-header h5 {
+        font-size: var(--font-size-sm);
+    }
+
+    .modal {
+        margin: var(--space-2);
+        max-width: calc(100% - var(--space-4));
+    }
+
+    .modal-header h2 {
+        font-size: var(--font-size-lg);
+    }
+
+    .modal-overlay {
+        padding: var(--space-2);
+    }
+
+    .btn {
+        padding: var(--space-2) var(--space-4);
+        font-size: var(--font-size-sm);
+    }
+
+    .btn i {
+        display: none;
+    }
+
+    /* Forms */
+    .form-group {
+        margin-bottom: var(--space-3);
+    }
+
+    .form-group label {
+        font-size: var(--font-size-sm);
+    }
+
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+        font-size: var(--font-size-sm);
+        padding: var(--space-2);
+    }
+
+    /* Tables */
+    table {
+        font-size: 0.75rem;
+    }
+
+    /* Stage cards */
+    .stage-card {
+        padding: var(--space-3);
+    }
+
+    .stage-header h3 {
+        font-size: var(--font-size-base);
+    }
+
+    /* Village cards */
+    .village-card {
+        padding: var(--space-3);
+    }
+
+    /* Search bar */
+    .search-bar {
+        flex-direction: column;
+    }
+
+    .search-bar input {
+        font-size: var(--font-size-sm);
+    }
+
+    /* Date inputs */
+    input[type="date"] {
+        font-size: var(--font-size-sm);
+        padding: var(--space-2);
+    }
+
+    /* Logo text */
+    .logo-text div {
+        font-size: 0.75rem;
+        line-height: 1;
+    }
+}
+
+/* Utility classes for responsive design */
+@media (max-width: 768px) {
+    .hide-mobile {
+        display: none !important;
+    }
+}
+
+@media (min-width: 769px) {
+    .show-mobile {
+        display: none !important;
+    }
+}
+
+/* Fix for overflow issues */
+* {
+    max-width: 100%;
+}
+
+img {
+    height: auto;
+}
+
+/* Ensure text doesn't overflow on small screens */
+@media (max-width: 768px) {
+    h1, h2, h3, h4, h5, h6 {
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        hyphens: auto;
+    }
+
+    p, span, div {
+        word-wrap: break-word;
+        overflow-wrap: break-word;
     }
 }

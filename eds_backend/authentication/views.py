@@ -174,26 +174,104 @@ class UserUpdateView(generics.UpdateAPIView):
 
 class UserDeleteView(generics.DestroyAPIView):
     """Delete a specific user."""
-    
+
     queryset = User.objects.all()
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_permissions(self):
         """Only allow admin to delete users."""
         if self.request.user.role != 'admin':
             self.permission_classes = [permissions.IsAdminUser]
         return super().get_permissions()
-    
+
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        
+
         # Prevent users from deleting themselves
         if instance.id == request.user.id:
             return Response({
                 'error': 'You cannot delete your own account'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         self.perform_destroy(instance)
         return Response({
             'message': 'User deleted successfully'
+        }, status=status.HTTP_200_OK)
+
+
+class ChangePasswordView(APIView):
+    """Allow current user to change their own password."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+
+        if not old_password or not new_password:
+            return Response({
+                'error': 'Both old_password and new_password are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+
+        # Check if old password is correct
+        if not user.check_password(old_password):
+            return Response({
+                'error': 'Ancien mot de passe incorrect'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate new password
+        if len(new_password) < 6:
+            return Response({
+                'error': 'Le nouveau mot de passe doit contenir au moins 6 caractères'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Set new password
+        user.set_password(new_password)
+        user.save()
+
+        return Response({
+            'message': 'Mot de passe changé avec succès'
+        }, status=status.HTTP_200_OK)
+
+
+class ResetUserPasswordView(APIView):
+    """Allow admin to reset a user's password."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, user_id):
+        # Check if user is admin
+        if request.user.role != 'admin':
+            return Response({
+                'error': 'Seuls les administrateurs peuvent réinitialiser les mots de passe'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        new_password = request.data.get('new_password')
+
+        if not new_password:
+            return Response({
+                'error': 'new_password est requis'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate new password
+        if len(new_password) < 6:
+            return Response({
+                'error': 'Le mot de passe doit contenir au moins 6 caractères'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return Response({
+                'error': 'Utilisateur non trouvé'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Set new password
+        user.set_password(new_password)
+        user.save()
+
+        return Response({
+            'message': f'Mot de passe de {user.get_full_name()} réinitialisé avec succès'
         }, status=status.HTTP_200_OK)

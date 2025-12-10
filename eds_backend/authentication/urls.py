@@ -2,8 +2,9 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RegisterView, LoginView, LogoutView, CurrentUserView,
-    UserListView, UserCreateView, UserDetailView, 
-    UserUpdateView, UserDeleteView
+    UserListView, UserCreateView, UserDetailView,
+    UserUpdateView, UserDeleteView,
+    ChangePasswordView, ResetUserPasswordView
 )
 
 urlpatterns = [
@@ -13,7 +14,11 @@ urlpatterns = [
     path('logout/', LogoutView.as_view(), name='logout'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('me/', CurrentUserView.as_view(), name='current_user'),
-    
+
+    # Password management
+    path('change-password/', ChangePasswordView.as_view(), name='change_password'),
+    path('users/<int:user_id>/reset-password/', ResetUserPasswordView.as_view(), name='reset_user_password'),
+
     # User CRUD endpoints
     path('users/', UserListView.as_view(), name='user_list'),
     path('users/create/', UserCreateView.as_view(), name='user_create'),

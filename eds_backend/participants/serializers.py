@@ -17,8 +17,8 @@ class StageSerializer(serializers.ModelSerializer):
     constraints = serializers.JSONField()
 
     def get_currentParticipants(self, obj):
-        """Calcule le nombre réel de participants inscrits à cet événement."""
-        return ParticipantStage.objects.filter(stage=obj).count()
+        """Calcule le nombre réel de participants inscrits à cet événement (role='participant' uniquement)."""
+        return ParticipantStage.objects.filter(stage=obj, role='participant').count()
 
     # Champs calculés
     status = serializers.ReadOnlyField()
@@ -139,10 +139,10 @@ class StageUpdateSerializer(serializers.ModelSerializer):
         
         # Vérifier si des participants sont assignés à des bungalows pour ce stage
         if (start_date or end_date) and self.instance:
-            assigned_participants = self.instance.participants.filter(assigned_bungalow__isnull=False)
-            if assigned_participants.exists():
-                participant_names = ', '.join([f"{p.first_name} {p.last_name}" for p in assigned_participants[:3]])
-                count = assigned_participants.count()
+            assigned_registrations = self.instance.participant_registrations.filter(assigned_bungalow__isnull=False)
+            if assigned_registrations.exists():
+                participant_names = ', '.join([f"{reg.participant.first_name} {reg.participant.last_name}" for reg in assigned_registrations[:3]])
+                count = assigned_registrations.count()
                 raise serializers.ValidationError({
                     'dates': f'🚫 IMPOSSIBLE DE MODIFIER LES DATES: Ce stage a {count} participant(s) assigné(s) à des bungalows ({participant_names}{"..." if count > 3 else ""}). Vous devez d\'abord désassigner tous les participants avant de modifier les dates du stage.'
                 })
@@ -285,8 +285,8 @@ class ParticipantCreateSerializer(serializers.ModelSerializer):
                             stage=stage,
                             created_by=self.context.get('request').user if self.context.get('request') else None
                         )
-                        # Mettre à jour le compteur
-                        stage.current_participants = stage.participant_registrations.count()
+                        # Mettre à jour le compteur (only role='participant')
+                        stage.current_participants = stage.participant_registrations.filter(role='participant').count()
                         stage.save(update_fields=['current_participants'])
                 except Stage.DoesNotExist:
                     pass
@@ -452,8 +452,8 @@ class StageListSerializer(serializers.ModelSerializer):
     progressPercentage = serializers.ReadOnlyField(source='progress_percentage')
 
     def get_currentParticipants(self, obj):
-        """Calcule le nombre réel de participants inscrits à cet événement."""
-        return ParticipantStage.objects.filter(stage=obj).count()
+        """Calcule le nombre réel de participants inscrits à cet événement (role='participant' uniquement)."""
+        return ParticipantStage.objects.filter(stage=obj, role='participant').count()
 
     class Meta:
         model = Stage
@@ -803,9 +803,9 @@ class ParticipantStageCreateSerializer(serializers.ModelSerializer):
         """Créer l'inscription et mettre à jour le compteur du stage."""
         participant_stage = ParticipantStage.objects.create(**validated_data)
 
-        # Mettre à jour le compteur de participants du stage
+        # Mettre à jour le compteur de participants du stage (only role='participant')
         stage = validated_data['stage']
-        stage.current_participants = stage.participant_registrations.count()
+        stage.current_participants = stage.participant_registrations.filter(role='participant').count()
         stage.save(update_fields=['current_participants'])
 
         return participant_stage

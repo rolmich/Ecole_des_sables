@@ -6,6 +6,7 @@ import apiService from '../services/api';
 import PageHeader from './PageHeader';
 import ConfirmationModal from './ConfirmationModal';
 import { NATIONALITIES } from '../constants/nationalities';
+import Pagination from './Pagination';
 
 const Participants: React.FC = () => {
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -18,6 +19,10 @@ const Participants: React.FC = () => {
   const [deletingParticipant, setDeletingParticipant] = useState<Participant | null>(null);
   const [loading, setLoading] = useState(false);
   const [alert, setAlert] = useState<{type: 'success' | 'error' | 'warning', message: string} | null>(null);
+
+  // États pour la pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(15); // 15 participants par page
 
   const showAlert = (type: 'success' | 'error' | 'warning', message: string) => {
     setAlert({ type, message });
@@ -57,6 +62,17 @@ const Participants: React.FC = () => {
 
     return matchesSearch && matchesStatus;
   });
+
+  // Calculs pour la pagination
+  const totalPages = Math.ceil(filteredParticipants.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedParticipants = filteredParticipants.slice(startIndex, endIndex);
+
+  // Réinitialiser la page quand les filtres changent
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter]);
 
   const getStatusText = (status: string) => {
     switch (status) {
@@ -308,7 +324,7 @@ const Participants: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredParticipants.map((participant) => (
+                paginatedParticipants.map((participant) => (
                   <tr key={participant.id}>
                     <td>
                       <input
@@ -407,6 +423,17 @@ const Participants: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination */}
+        {filteredParticipants.length > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPageChange={setCurrentPage}
+            itemsPerPage={itemsPerPage}
+            totalItems={filteredParticipants.length}
+          />
+        )}
       </div>
 
       {showCreateModal && (

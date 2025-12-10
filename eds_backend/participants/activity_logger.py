@@ -278,3 +278,135 @@ def log_language_delete(user, language_name, language_id):
         description=description,
         changes={}
     )
+
+
+def log_participant_stage_create(user, participant, stage):
+    """Enregistre l'ajout d'un participant à un événement."""
+    description = f"{user.first_name} {user.last_name} a ajouté le participant '{participant.full_name}' à l'événement '{stage.name}'"
+    log_activity(
+        user=user,
+        action_type='create',
+        model_name='ParticipantStage',
+        obj=participant,
+        description=description,
+        changes={
+            'participant': participant.full_name,
+            'stage': stage.name,
+            'stage_id': stage.id
+        }
+    )
+
+
+def log_participant_stage_delete(user, participant_name, stage_name):
+    """Enregistre la suppression d'un participant d'un événement."""
+    description = f"{user.first_name} {user.last_name} a retiré le participant '{participant_name}' de l'événement '{stage_name}'"
+    ActivityLog.objects.create(
+        user=user,
+        action_type='delete',
+        model_name='ParticipantStage',
+        object_id=None,
+        object_repr=f"{participant_name} - {stage_name}",
+        description=description,
+        changes={
+            'participant': participant_name,
+            'stage': stage_name
+        }
+    )
+
+
+def log_excel_import_participant(user, participant_name, stage_name, was_created=False, languages=None):
+    """Enregistre l'import Excel d'un participant individuel."""
+    if was_created:
+        description = f"{user.first_name} {user.last_name} a créé et ajouté le participant '{participant_name}' à l'événement '{stage_name}' via import Excel"
+        action_type = 'create'
+    else:
+        description = f"{user.first_name} {user.last_name} a ajouté le participant existant '{participant_name}' à l'événement '{stage_name}' via import Excel"
+        action_type = 'create'
+
+    changes = {
+        'import_type': 'excel',
+        'stage': stage_name,
+        'participant': participant_name,
+        'was_created': was_created
+    }
+
+    if languages:
+        changes['languages'] = languages
+        if languages:
+            description += f" (langues: {', '.join(languages)})"
+
+    ActivityLog.objects.create(
+        user=user,
+        action_type=action_type,
+        model_name='ParticipantStage',
+        object_id=None,
+        object_repr=f"{participant_name} - {stage_name}",
+        description=description,
+        changes=changes
+    )
+
+
+def log_excel_import_summary(user, stage_name, imported_count, created_count):
+    """Enregistre un résumé de l'import Excel."""
+    total = imported_count + created_count
+    description = f"{user.first_name} {user.last_name} a terminé l'import Excel pour l'événement '{stage_name}': {total} participant(s) ({imported_count} existant(s), {created_count} créé(s))"
+    ActivityLog.objects.create(
+        user=user,
+        action_type='create',
+        model_name='Stage',
+        object_id=None,
+        object_repr=f"Import Excel - {stage_name}",
+        description=description,
+        changes={
+            'import_type': 'excel_summary',
+            'stage': stage_name,
+            'imported_existing': imported_count,
+            'created_new': created_count,
+            'total': total
+        }
+    )
+
+
+def log_auto_assignment_individual(user, participant_name, stage_name, bungalow_name, bed_id, village_name=None):
+    """Enregistre l'assignation automatique d'un participant individuel."""
+    if village_name:
+        description = f"{user.first_name} {user.last_name} a assigné automatiquement '{participant_name}' au bungalow '{bungalow_name}' ({village_name}) lit {bed_id} pour l'événement '{stage_name}'"
+    else:
+        description = f"{user.first_name} {user.last_name} a assigné automatiquement '{participant_name}' au bungalow '{bungalow_name}' lit {bed_id} pour l'événement '{stage_name}'"
+
+    ActivityLog.objects.create(
+        user=user,
+        action_type='assign',
+        model_name='Participant',
+        object_id=None,
+        object_repr=f"{participant_name} - {bungalow_name}",
+        description=description,
+        changes={
+            'assignment_type': 'automatic',
+            'stage': stage_name,
+            'participant': participant_name,
+            'bungalow': bungalow_name,
+            'bed': bed_id,
+            'village': village_name
+        }
+    )
+
+
+def log_auto_assignment_summary(user, stage_name, success_count, failure_count):
+    """Enregistre un résumé de l'assignation automatique."""
+    description = f"{user.first_name} {user.last_name} a terminé l'assignation automatique pour l'événement '{stage_name}': {success_count} réussite(s), {failure_count} échec(s)"
+    ActivityLog.objects.create(
+        user=user,
+        action_type='assign',
+        model_name='Stage',
+        object_id=None,
+        object_repr=f"Assignation automatique - {stage_name}",
+        description=description,
+        changes={
+            'assignment_type': 'automatic_summary',
+            'stage': stage_name,
+            'success_count': success_count,
+            'failure_count': failure_count,
+            'total_processed': success_count + failure_count
+        }
+    )

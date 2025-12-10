@@ -12,7 +12,9 @@ import Reports from './components/Reports';
 import Users from './components/Users';
 import Languages from './components/Languages';
 import History from './components/History';
+import Profile from './components/Profile';
 import ProtectedRoute from './components/ProtectedRoute';
+import authService from './services/authService';
 import './App.css';
 
 function App() {
@@ -20,13 +22,25 @@ function App() {
     <Router>
       <div className="App">
         <Routes>
+          {/* Page de connexion */}
           <Route path="/login" element={<Login />} />
+
+          {/* Redirection racine : /login si déconnecté, /dashboard si connecté */}
+          <Route
+            path="/"
+            element={
+              authService.isLoggedIn()
+                ? <Navigate to="/dashboard" replace />
+                : <Navigate to="/login" replace />
+            }
+          />
+
+          {/* Routes protégées */}
           <Route path="/" element={
             <ProtectedRoute>
               <Layout />
             </ProtectedRoute>
           }>
-            <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="stages" element={<Stages />} />
             <Route path="stages/:id" element={<StageDetail />} />
@@ -37,6 +51,7 @@ function App() {
             <Route path="users" element={<Users />} />
             <Route path="languages" element={<Languages />} />
             <Route path="history" element={<History />} />
+            <Route path="profile" element={<Profile />} />
           </Route>
         </Routes>
       </div>

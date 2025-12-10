@@ -2,7 +2,27 @@
  * Service API pour communiquer avec le backend Django
  */
 
-const API_BASE_URL = process.env.REACT_APP_API_URL!;
+// Fonction pour détecter l'adresse IP du backend
+const getBackendUrl = (): string => {
+  // Vérifier si une variable d'environnement est définie
+  const envApiUrl = (import.meta as any).env?.VITE_API_URL;
+  if (envApiUrl) {
+    return envApiUrl;
+  }
+
+  // Détecter automatiquement l'IP depuis l'URL actuelle
+  const currentHostname = window.location.hostname;
+
+  // Si on accède via une IP réseau (pas localhost), utiliser cette IP pour le backend
+  if (currentHostname !== 'localhost' && currentHostname !== '127.0.0.1') {
+    return `http://${currentHostname}:8000/api`;
+  }
+
+  // Par défaut, utiliser localhost
+  return 'http://localhost:8000/api';
+};
+
+const API_BASE_URL = getBackendUrl();
 
 interface ApiError {
   message: string;
@@ -339,6 +359,25 @@ class ApiService {
    */
   async deleteUser(id: number): Promise<any> {
     return this.delete(`/auth/users/${id}/delete/`);
+  }
+
+  /**
+   * Change password - Changer le mot de passe de l'utilisateur courant
+   */
+  async changePassword(oldPassword: string, newPassword: string): Promise<any> {
+    return this.post('/auth/change-password/', {
+      old_password: oldPassword,
+      new_password: newPassword
+    });
+  }
+
+  /**
+   * Reset user password - Réinitialiser le mot de passe d'un utilisateur (admin only)
+   */
+  async resetUserPassword(userId: number, newPassword: string): Promise<any> {
+    return this.post(`/auth/users/${userId}/reset-password/`, {
+      new_password: newPassword
+    });
   }
 
   /**
@@ -682,7 +721,7 @@ class ApiService {
    * Assigne une inscription (ParticipantStage) à un bungalow.
    * La durée est basée sur arrival_date/departure_date de l'inscription.
    */
-  async assignRegistration(registrationId: number, data: { bungalowId: number; bed: string }): Promise<any> {
+  async assignRegistration(registrationId: number, data: { bungalowId: number; bed: string; force_assign?: boolean }): Promise<any> {
     return this.request<any>(`/registrations/${registrationId}/assign/`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -705,6 +744,16 @@ class ApiService {
   async exportAssignments(stageId?: number): Promise<any> {
     const queryParams = stageId ? `?stage_id=${stageId}` : '';
     return this.request<any>(`/registrations/export/${queryParams}`);
+  }
+
+  /**
+   * Assigne automatiquement tous les participants non assignés d'un événement.
+   * @param stageId - ID de l'événement
+   */
+  async autoAssignStageParticipants(stageId: number): Promise<any> {
+    return this.request<any>(`/stages/${stageId}/auto-assign/`, {
+      method: 'POST',
+    });
   }
 
   // ==================== EXCEL IMPORT METHODS ====================

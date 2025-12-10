@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ActivityLog, ActivityLogStats } from '../types/ActivityLog';
 import dataService from '../services/dataService';
+import Pagination from './Pagination';
 import './History.css';
 
 const History: React.FC = () => {
@@ -18,12 +19,17 @@ const History: React.FC = () => {
   // Utilisateurs uniques pour le filtre
   const [uniqueUsers, setUniqueUsers] = useState<{ id: number; name: string }[]>([]);
 
+  // États pour la pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(20); // 20 activités par page
+
   useEffect(() => {
     loadData();
   }, []);
 
   useEffect(() => {
     filterActivities();
+    setCurrentPage(1); // Réinitialiser la page quand les filtres changent
   }, [userFilter, actionTypeFilter, modelNameFilter, searchQuery]);
 
   const loadData = async () => {
@@ -308,8 +314,16 @@ const History: React.FC = () => {
             <i className="fas fa-inbox"></i>
             <p>Aucune activité trouvée</p>
           </div>
-        ) : (
-          activities.map((activity) => (
+        ) : (() => {
+          // Calculs pour la pagination
+          const totalPages = Math.ceil(activities.length / itemsPerPage);
+          const startIndex = (currentPage - 1) * itemsPerPage;
+          const endIndex = startIndex + itemsPerPage;
+          const paginatedActivities = activities.slice(startIndex, endIndex);
+
+          return (
+            <>
+              {paginatedActivities.map((activity) => (
             <div key={activity.id} className={`activity-item ${getActionColor(activity.actionType)}`}>
               <div className="activity-icon">
                 <i className={getActionIcon(activity.actionType)}></i>
@@ -340,8 +354,19 @@ const History: React.FC = () => {
                 </div>
               </div>
             </div>
-          ))
-        )}
+              ))}
+
+              {/* Pagination */}
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={setCurrentPage}
+                itemsPerPage={itemsPerPage}
+                totalItems={activities.length}
+              />
+            </>
+          );
+        })()}
       </div>
     </div>
   );

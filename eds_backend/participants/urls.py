@@ -87,6 +87,9 @@ urlpatterns = [
     # Statistiques des participants d'un événement
     path('stages/<int:stage_id>/participants/stats/', views.stage_participants_stats, name='stage-participants-stats'),
 
+    # Assignation automatique des participants d'un événement
+    path('stages/<int:stage_id>/auto-assign/', views.auto_assign_stage_participants, name='auto-assign-stage'),
+
     # ==================== PARTICIPANT SIMPLE URLS (sans événement) ====================
 
     # Liste et création de participants (indépendant des événements)
@@ -124,5 +127,10 @@ urlpatterns = [
 
     # Statistiques du tableau de bord
     path('dashboard/stats/', views.dashboard_stats, name='dashboard-stats'),
+
+    # ==================== NETWORK INFO URLS ====================
+
+    # Information réseau (IP locale)
+    path('network-info/', views.network_info, name='network-info'),
 ]
 

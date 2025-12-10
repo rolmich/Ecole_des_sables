@@ -853,6 +853,22 @@ class DataService {
     }
   }
 
+  async changePassword(oldPassword: string, newPassword: string): Promise<void> {
+    try {
+      await apiService.changePassword(oldPassword, newPassword);
+    } catch (error: any) {
+      throw new Error(error.message || 'Erreur lors du changement de mot de passe');
+    }
+  }
+
+  async resetUserPassword(userId: number, newPassword: string): Promise<void> {
+    try {
+      await apiService.resetUserPassword(userId, newPassword);
+    } catch (error: any) {
+      throw new Error(error.message || 'Erreur lors de la réinitialisation du mot de passe');
+    }
+  }
+
   // Méthodes pour les stages (maintenant depuis l'API)
   async getStages(params?: { status?: string; search?: string }): Promise<Stage[]> {
     try {

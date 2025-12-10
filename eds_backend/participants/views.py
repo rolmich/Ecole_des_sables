@@ -21,13 +21,17 @@ from .assignment_logic import (
     assign_participant_to_bungalow,
     validate_assignment,
     get_bungalow_availability,
-    AssignmentError
+    AssignmentError,
+    assign_participants_automatically_for_stage
 )
 from .activity_logger import (
     log_stage_create, log_stage_update, log_stage_delete,
     log_participant_create, log_participant_update, log_participant_delete,
     log_assignment, log_unassignment,
-    log_language_create, log_language_update, log_language_delete
+    log_language_create, log_language_update, log_language_delete,
+    log_participant_stage_create, log_participant_stage_delete,
+    log_excel_import_participant, log_excel_import_summary,
+    log_auto_assignment_individual, log_auto_assignment_summary
 )
 
 
@@ -521,13 +525,13 @@ def participants_by_stage(request, stage_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def unassigned_participants(request):
-    """Retourne tous les participants non assignés."""
-    participants = Participant.objects.filter(assigned_bungalow__isnull=True)
-    serializer = ParticipantListSerializer(participants, many=True)
-    
+    """Retourne les participants non assignés à un bungalow."""
+    unassigned = Participant.objects.filter(assigned_bungalow__isnull=True)
+    serializer = ParticipantListSerializer(unassigned, many=True)
+
     return Response({
         'participants': serializer.data,
-        'count': participants.count()
+        'count': unassigned.count()
     })
 
 
@@ -653,7 +657,7 @@ def bungalow_details(request, bungalow_id):
     
     # Récupérer les participants assignés à ce bungalow
     participants = Participant.objects.filter(assigned_bungalow=bungalow)
-    
+
     return Response({
         'success': True,
         'bungalow': BungalowSerializer(bungalow).data,
@@ -960,8 +964,15 @@ class ParticipantStageListCreateView(generics.ListCreateAPIView):
         return ParticipantStageSerializer
 
     def perform_create(self, serializer):
-        """Ajoute l'utilisateur créateur."""
-        serializer.save(created_by=self.request.user)
+        """Ajoute l'utilisateur créateur et log l'activité."""
+        participant_stage = serializer.save(created_by=self.request.user)
+
+        # Log de l'activité
+        log_participant_stage_create(
+            self.request.user,
+            participant_stage.participant,
+            participant_stage.stage
+        )
 
 
 class ParticipantStageDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -982,6 +993,8 @@ class ParticipantStageDetailView(generics.RetrieveUpdateDestroyAPIView):
         """Supprime l'inscription, libère le lit et met à jour le compteur du stage."""
         instance = self.get_object()
         stage = instance.stage
+        participant_name = instance.participant.full_name
+        stage_name = stage.name
 
         # Libérer le lit du bungalow si l'inscription était assignée
         if instance.assigned_bungalow and instance.assigned_bed:
@@ -1001,9 +1014,12 @@ class ParticipantStageDetailView(generics.RetrieveUpdateDestroyAPIView):
         # Supprimer l'inscription
         self.perform_destroy(instance)
 
-        # Mettre à jour le compteur de participants du stage
-        stage.current_participants = stage.participant_registrations.count()
+        # Mettre à jour le compteur de participants du stage (only role='participant')
+        stage.current_participants = stage.participant_registrations.filter(role='participant').count()
         stage.save(update_fields=['current_participants'])
+
+        # Log de l'activité
+        log_participant_stage_delete(request.user, participant_name, stage_name)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1143,11 +1159,25 @@ def unassigned_registrations(request):
         try:
             start = datetime.strptime(start_date, '%Y-%m-%d').date()
             end = datetime.strptime(end_date, '%Y-%m-%d').date()
+
             # Filtrer les inscriptions dont la période chevauche la période demandée
-            registrations = registrations.filter(
-                Q(arrival_date__lte=end, departure_date__gte=start) |
-                Q(arrival_date__isnull=True, stage__start_date__lte=end, stage__end_date__gte=start)
-            )
+            # Logique de chevauchement: le participant doit être présent pendant la période filtrée
+            # - Si arrival_date et departure_date sont définis: utiliser ces dates
+            # - Sinon: utiliser les dates du stage
+
+            filtered_registrations = []
+            for reg in registrations:
+                # Déterminer les dates effectives du participant
+                participant_start = reg.arrival_date if reg.arrival_date else reg.stage.start_date
+                participant_end = reg.departure_date if reg.departure_date else reg.stage.end_date
+
+                # Vérifier le chevauchement: le participant est présent si
+                # sa date de départ est >= date de début du filtre ET
+                # sa date d'arrivée est <= date de fin du filtre
+                if participant_end >= start and participant_start <= end:
+                    filtered_registrations.append(reg.id)
+
+            registrations = registrations.filter(id__in=filtered_registrations)
         except ValueError:
             pass
 
@@ -1209,6 +1239,9 @@ def assign_registration(request, registration_id):
     start_date = registration.effective_arrival_date
     end_date = registration.effective_departure_date
 
+    # Vérifier si l'utilisateur veut forcer l'assignation malgré les règles
+    force_assign = request.data.get('force_assign', False)
+
     # Vérifier les conflits de genre
     participant = registration.participant
     other_occupants = ParticipantStage.objects.filter(
@@ -1222,13 +1255,17 @@ def assign_registration(request, registration_id):
         if start_date <= occ_end and end_date >= occ_start:
             # Il y a chevauchement, vérifier le genre
             if occupant.participant.gender != participant.gender:
-                return Response({
-                    'error': f'Conflit de genre: {occupant.participant.full_name} ({occupant.participant.get_gender_display()}) '
+                warning_msg = (f'Conflit de genre: {occupant.participant.full_name} ({occupant.participant.get_gender_display()}) '
                              f'occupe ce bungalow du {occ_start} au {occ_end}. '
-                             f'Impossible d\'ajouter {participant.full_name} ({participant.get_gender_display()}).'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                             f'Voulez-vous vraiment ajouter {participant.full_name} ({participant.get_gender_display()}) ?')
+                if not force_assign:
+                    return Response({
+                        'warning': True,
+                        'message': warning_msg,
+                        'requires_confirmation': True
+                    }, status=status.HTTP_409_CONFLICT)
 
-    # Vérifier si le lit est déjà occupé pendant cette période
+    # Vérifier si le lit est déjà occupé pendant cette période (BLOCAGE ABSOLU)
     bed_occupants = ParticipantStage.objects.filter(
         assigned_bungalow=bungalow,
         assigned_bed=bed_id
@@ -1240,13 +1277,144 @@ def assign_registration(request, registration_id):
         if start_date <= occ_end and end_date >= occ_start:
             return Response({
                 'error': f'Le lit {bed_id} est déjà occupé par {occupant.participant.full_name} '
-                         f'du {occ_start} au {occ_end}'
+                         f'du {occ_start} au {occ_end}. Impossible d\'assigner ce lit.'
             }, status=status.HTTP_400_BAD_REQUEST)
+
+    # Vérifier si des participants de stages différents partagent le même bungalow pendant la même période
+    other_stage_occupants = ParticipantStage.objects.filter(
+        assigned_bungalow=bungalow
+    ).exclude(id=registration_id).exclude(stage_id=registration.stage_id).select_related('participant', 'stage')
+
+    for occupant in other_stage_occupants:
+        occ_start = occupant.effective_arrival_date
+        occ_end = occupant.effective_departure_date
+        if start_date <= occ_end and end_date >= occ_start:
+            warning_msg = (f'Conflit d\'événement: {occupant.participant.full_name} de l\'événement "{occupant.stage.name}" '
+                         f'occupe ce bungalow du {occ_start} au {occ_end}. '
+                         f'Voulez-vous vraiment ajouter {participant.full_name} de l\'événement "{registration.stage.name}" ?')
+            if not force_assign:
+                return Response({
+                    'warning': True,
+                    'message': warning_msg,
+                    'requires_confirmation': True
+                }, status=status.HTTP_409_CONFLICT)
+
+    # ========== RÈGLES D'ASSIGNATION (MÊMES QUE L'AUTO-ASSIGNATION) ==========
+
+    # Collecter les warnings au lieu de bloquer immédiatement
+    warnings = []
+
+    # RÈGLE 1: Les encadrants doivent être seuls dans leur chambre
+    if registration.role == 'instructor':
+        # Vérifier si d'autres personnes sont déjà assignées pendant la même période
+        overlapping_occupants = ParticipantStage.objects.filter(
+            assigned_bungalow=bungalow
+        ).exclude(id=registration_id).select_related('participant')
+
+        for occupant in overlapping_occupants:
+            occ_start = occupant.effective_arrival_date
+            occ_end = occupant.effective_departure_date
+            if start_date <= occ_end and end_date >= occ_start:
+                warning_msg = (f'Règle encadrants: Les encadrants doivent être seuls dans leur chambre. '
+                             f'{occupant.participant.full_name} occupe déjà ce bungalow du {occ_start} au {occ_end}.')
+                if not force_assign:
+                    return Response({
+                        'warning': True,
+                        'message': warning_msg,
+                        'requires_confirmation': True
+                    }, status=status.HTTP_409_CONFLICT)
+                else:
+                    warnings.append(warning_msg)
+
+    # RÈGLE 2: Ne pas assigner quelqu'un d'autre avec un encadrant
+    overlapping_instructors = ParticipantStage.objects.filter(
+        assigned_bungalow=bungalow,
+        role='instructor'
+    ).exclude(id=registration_id).select_related('participant')
+
+    for instructor in overlapping_instructors:
+        instr_start = instructor.effective_arrival_date
+        instr_end = instructor.effective_departure_date
+        if start_date <= instr_end and end_date >= instr_start:
+            warning_msg = (f'Règle encadrants: Impossible d\'assigner à ce bungalow. '
+                         f'L\'encadrant {instructor.participant.full_name} doit être seul et occupe ce bungalow '
+                         f'du {instr_start} au {instr_end}.')
+            if not force_assign:
+                return Response({
+                    'warning': True,
+                    'message': warning_msg,
+                    'requires_confirmation': True
+                }, status=status.HTTP_409_CONFLICT)
+            else:
+                warnings.append(warning_msg)
+
+    # RÈGLE 3: Les musiciens devraient être dans le Village C
+    if registration.role == 'musician' and bungalow.village != 'C':
+        warning_msg = (f'Règle musiciens: Les musiciens doivent être assignés au Village C. '
+                     f'Le bungalow {bungalow.name} est dans le Village {bungalow.village}.')
+        if not force_assign:
+            return Response({
+                'warning': True,
+                'message': warning_msg,
+                'requires_confirmation': True
+            }, status=status.HTTP_409_CONFLICT)
+        else:
+            warnings.append(warning_msg)
+
+    # RÈGLE 4: Ne pas mélanger les rôles (étudiants séparés des musiciens/encadrants)
+    if registration.role == 'participant':
+        # Vérifier qu'il n'y a pas de musiciens ou encadrants pendant la même période
+        overlapping_others = ParticipantStage.objects.filter(
+            assigned_bungalow=bungalow,
+            role__in=['musician', 'instructor']
+        ).exclude(id=registration_id).select_related('participant')
+
+        for occupant in overlapping_others:
+            occ_start = occupant.effective_arrival_date
+            occ_end = occupant.effective_departure_date
+            if start_date <= occ_end and end_date >= occ_start:
+                role_display = 'musicien' if occupant.role == 'musician' else 'encadrant'
+                warning_msg = (f'Règle séparation: Les étudiants ne peuvent pas partager un bungalow avec des musiciens ou encadrants. '
+                             f'{occupant.participant.full_name} ({role_display}) occupe ce bungalow du {occ_start} au {occ_end}.')
+                if not force_assign:
+                    return Response({
+                        'warning': True,
+                        'message': warning_msg,
+                        'requires_confirmation': True
+                    }, status=status.HTTP_409_CONFLICT)
+                else:
+                    warnings.append(warning_msg)
+
+    elif registration.role in ['musician', 'staff']:
+        # Les musiciens/staff ne doivent pas être avec des étudiants
+        overlapping_students = ParticipantStage.objects.filter(
+            assigned_bungalow=bungalow,
+            role='participant'
+        ).exclude(id=registration_id).select_related('participant')
+
+        for student in overlapping_students:
+            std_start = student.effective_arrival_date
+            std_end = student.effective_departure_date
+            if start_date <= std_end and end_date >= std_start:
+                role_display = 'musicien' if registration.role == 'musician' else 'staff'
+                warning_msg = (f'Règle séparation: Les {role_display}s ne peuvent pas partager un bungalow avec des étudiants. '
+                             f'{student.participant.full_name} (étudiant) occupe ce bungalow du {std_start} au {std_end}.')
+                if not force_assign:
+                    return Response({
+                        'warning': True,
+                        'message': warning_msg,
+                        'requires_confirmation': True
+                    }, status=status.HTTP_409_CONFLICT)
+                else:
+                    warnings.append(warning_msg)
+
+    # ========== FIN DES RÈGLES D'ASSIGNATION ==========
 
     # Effectuer l'assignation dans une transaction atomique
     with transaction.atomic():
         registration.assigned_bungalow = bungalow
         registration.assigned_bed = bed_id
+        registration.was_forced = force_assign  # Marquer si l'assignation a été forcée
         registration.save()
 
         # Mettre à jour les lits du bungalow
@@ -1257,11 +1425,16 @@ def assign_registration(request, registration_id):
                     'participantId': participant.id,
                     'name': participant.full_name,
                     'gender': participant.gender,
+                    'age': participant.age if participant.age else None,
+                    'nationality': participant.nationality if participant.nationality else None,
+                    'languages': [lang.name for lang in participant.languages.all()] if participant.languages.exists() else [],
+                    'role': registration.role,
                     'startDate': str(start_date),
                     'startTime': str(registration.arrival_time) if registration.arrival_time else '',
                     'endDate': str(end_date),
                     'endTime': str(registration.departure_time) if registration.departure_time else '',
-                    'stageName': registration.stage.name
+                    'stageName': registration.stage.name,
+                    'wasForced': registration.was_forced  # Indiquer si l'assignation a été forcée
                 }
                 break
         bungalow.save()
@@ -1774,6 +1947,13 @@ def execute_excel_import(request):
     valid_imports = request.data.get('valid_imports', [])
     new_participants = request.data.get('new_participants', [])
 
+    # Récupérer le nom du stage pour le log
+    stage_name = None
+    if valid_imports:
+        stage_name = valid_imports[0].get('stageName')
+    elif new_participants:
+        stage_name = new_participants[0].get('stageName')
+
     results = {
         'imported': [],
         'created_and_imported': [],
@@ -1801,9 +1981,18 @@ def execute_excel_import(request):
                 # Ajouter les nouvelles langues sans supprimer les existantes
                 participant.languages.add(*language_ids)
 
-            # Mettre à jour le compteur de participants
-            Stage.objects.filter(id=item['stageId']).update(
-                current_participants=F('current_participants') + 1
+            # Mettre à jour le compteur de participants (recalculer avec filtre role='participant')
+            stage = Stage.objects.get(id=item['stageId'])
+            stage.current_participants = stage.participant_registrations.filter(role='participant').count()
+            stage.save(update_fields=['current_participants'])
+
+            # Log individuel pour ce participant
+            log_excel_import_participant(
+                user=request.user,
+                participant_name=item['participantName'],
+                stage_name=item['stageName'],
+                was_created=False,
+                languages=item.get('languageNames', [])
             )
 
             results['imported'].append({
@@ -1850,14 +2039,24 @@ def execute_excel_import(request):
                 created_by=request.user
             )
 
-            # Mettre à jour le compteur de participants
-            Stage.objects.filter(id=item['stageId']).update(
-                current_participants=F('current_participants') + 1
+            # Mettre à jour le compteur de participants (recalculer avec filtre role='participant')
+            stage = Stage.objects.get(id=item['stageId'])
+            stage.current_participants = stage.participant_registrations.filter(role='participant').count()
+            stage.save(update_fields=['current_participants'])
+
+            # Log individuel pour ce nouveau participant
+            participant_name = f"{item['firstName']} {item['lastName']}"
+            log_excel_import_participant(
+                user=request.user,
+                participant_name=participant_name,
+                stage_name=item['stageName'],
+                was_created=True,
+                languages=item.get('languageNames', [])
             )
 
             results['created_and_imported'].append({
                 'email': item['email'],
-                'participantName': f"{item['firstName']} {item['lastName']}",
+                'participantName': participant_name,
                 'stageName': item['stageName'],
                 'languagesAdded': item.get('languageNames', [])
             })
@@ -1866,6 +2065,12 @@ def execute_excel_import(request):
                 'email': item['email'],
                 'reason': str(e)
             })
+
+    # Log résumé de l'import Excel (si au moins un participant a été importé)
+    imported_count = len(results['imported'])
+    created_count = len(results['created_and_imported'])
+    if (imported_count > 0 or created_count > 0) and stage_name:
+        log_excel_import_summary(request.user, stage_name, imported_count, created_count)
 
     return Response({
         'summary': {
@@ -1934,11 +2139,11 @@ def frequency_report(request):
     autres_count = event_counts.get('autres', 0)
     total_events = events.count()
 
-    # Liste des événements pour référence (avec le nombre réel d'inscriptions)
+    # Liste des événements pour référence (avec le nombre réel de participants role='participant')
     events_list = []
     for e in events:
-        # Compter le nombre réel d'inscriptions pour cet événement
-        real_participant_count = ParticipantStage.objects.filter(stage=e).count()
+        # Compter le nombre réel de participants (role='participant' uniquement)
+        real_participant_count = ParticipantStage.objects.filter(stage=e, role='participant').count()
         events_list.append({
             'id': e.id,
             'name': e.name,
@@ -2156,11 +2361,11 @@ def dashboard_stats(request):
     events_by_type = all_events.values('event_type').annotate(count=Count('id'))
     event_type_counts = {item['event_type']: item['count'] for item in events_by_type}
 
-    # Liste des événements actifs avec détails
+    # Liste des événements actifs avec détails (role='participant' uniquement)
     active_events_list = []
     for event in active_events:
-        registrations_count = ParticipantStage.objects.filter(stage=event).count()
-        assigned_count = ParticipantStage.objects.filter(stage=event, assigned_bungalow__isnull=False).count()
+        registrations_count = ParticipantStage.objects.filter(stage=event, role='participant').count()
+        assigned_count = ParticipantStage.objects.filter(stage=event, role='participant', assigned_bungalow__isnull=False).count()
         days_remaining = (event.end_date - today).days
         fill_rate = round((registrations_count / event.capacity * 100), 1) if event.capacity > 0 else 0
 
@@ -2178,10 +2383,10 @@ def dashboard_stats(request):
             'instructor': event.instructor
         })
 
-    # Liste des événements à venir
+    # Liste des événements à venir (role='participant' uniquement)
     upcoming_events_list = []
     for event in upcoming_events[:5]:  # Top 5
-        registrations_count = ParticipantStage.objects.filter(stage=event).count()
+        registrations_count = ParticipantStage.objects.filter(stage=event, role='participant').count()
         days_until = (event.start_date - today).days
         fill_rate = round((registrations_count / event.capacity * 100), 1) if event.capacity > 0 else 0
 
@@ -2280,9 +2485,9 @@ def dashboard_stats(request):
     # ========== ALERTES ET CONFLITS ==========
     alerts = []
 
-    # Événements presque pleins (> 90%)
+    # Événements presque pleins (> 90%) - role='participant' uniquement
     for event in active_events:
-        reg_count = ParticipantStage.objects.filter(stage=event).count()
+        reg_count = ParticipantStage.objects.filter(stage=event, role='participant').count()
         if event.capacity > 0 and (reg_count / event.capacity) > 0.9:
             alerts.append({
                 'type': 'capacity',
@@ -2420,3 +2625,97 @@ def dashboard_stats(request):
         },
         'lastUpdated': timezone.now().isoformat()
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def auto_assign_stage_participants(request, stage_id):
+    """
+    Assigne automatiquement tous les participants non assignés d'un stage aux bungalows.
+
+    Logique d'assignation:
+    1. Encadrants → chambre individuelle + lit double si possible
+    2. Staff → chambre individuelle si possible
+    3. Musiciens/Participants → optimisation du remplissage (grouper par genre)
+
+    POST /api/stages/<stage_id>/auto-assign/
+    """
+    try:
+        stage = Stage.objects.get(pk=stage_id)
+    except Stage.DoesNotExist:
+        return Response({
+            'success': False,
+            'error': f"Stage avec ID {stage_id} non trouvé"
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        # Lancer l'assignation automatique
+        results = assign_participants_automatically_for_stage(stage)
+
+        # Compter les résultats
+        success_count = len(results['success'])
+        failure_count = len(results['failure'])
+
+        # Log individuel pour chaque assignation réussie
+        for assignment in results['success']:
+            log_auto_assignment_individual(
+                user=request.user,
+                participant_name=assignment['participant'],
+                stage_name=assignment['stage'],
+                bungalow_name=assignment['bungalow'],
+                bed_id=assignment['bed'],
+                village_name=assignment.get('village')
+            )
+
+        # Log résumé de l'assignation automatique
+        if success_count > 0 or failure_count > 0:
+            log_auto_assignment_summary(request.user, stage.name, success_count, failure_count)
+
+        return Response({
+            'success': True,
+            'stage': {
+                'id': stage.id,
+                'name': stage.name
+            },
+            'summary': {
+                'total_assigned': success_count,
+                'total_failed': failure_count,
+                'success_rate': round((success_count / (success_count + failure_count) * 100), 1) if (success_count + failure_count) > 0 else 0
+            },
+            'assignments': results['success'],
+            'failures': results['failure'],
+            'message': f"Assignation automatique terminée: {success_count} participant(s) assigné(s), {failure_count} échec(s)"
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': f"Erreur lors de l'assignation automatique: {str(e)}"
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ==================== NETWORK INFO ====================
+
+@api_view(['GET'])
+@permission_classes([])  # Pas d'authentification requise
+def network_info(request):
+    """Retourne l'IP réseau locale du serveur."""
+    import socket
+
+    try:
+        # Même méthode que dans manage.py
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+
+        return Response({
+            'local_ip': local_ip,
+            'success': True
+        })
+    except Exception as e:
+        return Response({
+            'local_ip': '127.0.0.1',
+            'success': False,
+            'error': str(e)
+        })

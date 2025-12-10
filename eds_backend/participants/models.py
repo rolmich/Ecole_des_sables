@@ -417,6 +417,10 @@ class ParticipantStage(models.Model):
         blank=True,
         verbose_name="Lit assigné"
     )
+    was_forced = models.BooleanField(
+        default=False,
+        verbose_name="Assignation forcée (conflit accepté)"
+    )
 
     # Métadonnées
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Date d'inscription")

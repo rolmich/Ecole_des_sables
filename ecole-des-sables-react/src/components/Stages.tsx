@@ -5,6 +5,7 @@ import dataService from '../services/dataService';
 import PageHeader from './PageHeader';
 import ConfirmationModal from './ConfirmationModal';
 import ExcelImportModal from './ExcelImportModal';
+import Pagination from './Pagination';
 
 const Stages: React.FC = () => {
   const navigate = useNavigate();
@@ -23,6 +24,10 @@ const Stages: React.FC = () => {
     timestamp: Date;
   }>>([]);
   const [showImportModal, setShowImportModal] = useState(false);
+
+  // États pour la pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10); // 10 événements par page
 
   const showAlert = (type: 'success' | 'error' | 'warning', message: string) => {
     setAlert({ type, message });
@@ -188,6 +193,17 @@ const Stages: React.FC = () => {
 
     return matchesStatus && matchesEventType;
   });
+
+  // Calculs pour la pagination
+  const totalPages = Math.ceil(filteredStages.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedStages = filteredStages.slice(startIndex, endIndex);
+
+  // Réinitialiser la page quand les filtres changent
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, eventTypeFilter]);
 
   return (
     <>
@@ -422,7 +438,7 @@ const Stages: React.FC = () => {
             gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
             gap: '1.25rem'
           }}>
-            {filteredStages.map((stage) => {
+            {paginatedStages.map((stage) => {
               const statusClass = getStatusClass(stage);
               const fillRate = Math.round((stage.currentParticipants / stage.capacity) * 100);
               const startDate = new Date(stage.startDate);
@@ -465,11 +481,12 @@ const Stages: React.FC = () => {
               const typeIcons: Record<string, { icon: string; label: string }> = {
                 stage: { icon: 'fas fa-theater-masks', label: 'Stage' },
                 resident: { icon: 'fas fa-home', label: 'Résidence' },
+                workshop: { icon: 'fas fa-users', label: 'Atelier' },
                 autres: { icon: 'fas fa-sparkles', label: 'Événement' }
               };
 
               const theme = themes[statusClass];
-              const typeInfo = typeIcons[stage.eventType || 'stage'];
+              const typeInfo = typeIcons[stage.eventType || 'stage'] || typeIcons['autres'];
 
               return (
                 <div
@@ -805,6 +822,17 @@ const Stages: React.FC = () => {
               );
             })}
           </div>
+        )}
+
+        {/* Pagination */}
+        {filteredStages.length > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPageChange={setCurrentPage}
+            itemsPerPage={itemsPerPage}
+            totalItems={filteredStages.length}
+          />
         )}
       </div>
 

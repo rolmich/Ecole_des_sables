@@ -36,10 +36,25 @@ const Villages: React.FC = () => {
         setBungalows(bungalowsData);
         setStages(stagesData);
 
-        // Initialiser avec la date du premier stage si disponible
+        // Initialiser avec la date du prochain événement (à venir ou en cours)
         if (stagesData.length > 0) {
-          const firstStage = stagesData.find((s: Stage) => s.startDate && s.endDate);
-          if (firstStage) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          // Filtrer les événements à venir et en cours
+          const activeAndUpcomingStages = stagesData.filter((stage: Stage) => {
+            const endDate = new Date(stage.endDate);
+            endDate.setHours(0, 0, 0, 0);
+            return endDate >= today;
+          });
+
+          if (activeAndUpcomingStages.length > 0) {
+            const nextEvent = activeAndUpcomingStages[0];
+            setStartDate(nextEvent.startDate);
+            setEndDate(nextEvent.endDate);
+          } else if (stagesData.length > 0) {
+            // Si aucun événement à venir, utiliser le premier événement disponible
+            const firstStage = stagesData[0];
             setStartDate(firstStage.startDate);
             setEndDate(firstStage.endDate);
           }
@@ -85,12 +100,67 @@ const Villages: React.FC = () => {
     return bungalows.filter(b => b.village === village);
   };
 
+  // Fonction pour obtenir les occupants d'un bungalow (avec filtrage par dates)
+  const getBungalowOccupants = (bungalow: Bungalow) => {
+    if (!bungalow.beds) return [];
+
+    return bungalow.beds
+      .filter(bed => {
+        if (!bed.occupiedBy) return false;
+
+        // Si des dates de filtre sont définies, vérifier le chevauchement
+        if (startDate && endDate && typeof bed.occupiedBy === 'object') {
+          const occ = bed.occupiedBy;
+          if (occ.startDate && occ.endDate) {
+            const filterStart = new Date(startDate);
+            const filterEnd = new Date(endDate);
+            const occupantStart = new Date(occ.startDate);
+            const occupantEnd = new Date(occ.endDate);
+
+            // Vérifier le chevauchement: l'occupant doit être présent pendant la période filtrée
+            // Le participant est présent si sa date de départ >= date début filtre ET sa date d'arrivée <= date fin filtre
+            return occupantEnd >= filterStart && occupantStart <= filterEnd;
+          }
+        }
+
+        return true; // Si pas de filtre ou pas de dates, afficher tous les occupants
+      })
+      .map(bed => {
+        const occ = bed.occupiedBy;
+        if (typeof occ === 'object' && occ !== null) {
+          return {
+            bedId: bed.id,
+            participantName: occ.name || 'Inconnu',
+            registrationId: occ.registrationId || null,
+            stageName: occ.stageName || null,
+            gender: occ.gender || null,
+            age: occ.age || null,
+            nationality: occ.nationality || null,
+            languages: occ.languages || [],
+            role: occ.role || null
+          };
+        }
+        // Fallback pour les anciennes données (string ou number)
+        return {
+          bedId: bed.id,
+          participantName: typeof occ === 'string' ? occ : `Participant #${occ}`,
+          registrationId: null,
+          stageName: null,
+          gender: null,
+          age: null,
+          nationality: null,
+          languages: [],
+          role: null
+        };
+      });
+  };
+
   const getVillageInfo = (village: 'A' | 'B' | 'C') => {
     const villageBungalows = getBungalowsByVillage(village);
 
-    // Compter les bungalows occupés
+    // Compter les bungalows occupés (avec filtrage par dates)
     const occupied = villageBungalows.filter(b => {
-      const occupants = b.beds?.filter(bed => bed.occupiedBy !== null).length || 0;
+      const occupants = getBungalowOccupants(b).length;
       return occupants > 0;
     }).length;
 
@@ -111,52 +181,26 @@ const Villages: React.FC = () => {
   };
 
   const getBungalowOccupancy = (bungalow: Bungalow) => {
-    const occupants = bungalow.beds?.filter(bed => bed.occupiedBy !== null).length || 0;
+    const occupants = getBungalowOccupants(bungalow).length;
     return `${occupants}/${bungalow.capacity}`;
   };
 
   const getBungalowStatus = (bungalow: Bungalow) => {
-    const occupants = bungalow.beds?.filter(bed => bed.occupiedBy !== null).length || 0;
+    const occupants = getBungalowOccupants(bungalow).length;
     if (occupants === 0) return 'empty';
     if (occupants === bungalow.capacity) return 'full';
     return 'partial';
   };
 
-  const getBungalowOccupants = (bungalow: Bungalow) => {
-    if (!bungalow.beds) return [];
-    return bungalow.beds
-      .filter(bed => bed.occupiedBy !== null && bed.occupiedBy !== undefined)
-      .map(bed => {
-        const occ = bed.occupiedBy;
-        if (typeof occ === 'object' && occ !== null) {
-          return {
-            bedId: bed.id,
-            participantName: occ.name || 'Inconnu',
-            registrationId: occ.registrationId || null,
-            stageName: occ.stageName || null,
-            gender: occ.gender || null
-          };
-        }
-        // Fallback pour les anciennes données (string ou number)
-        return {
-          bedId: bed.id,
-          participantName: typeof occ === 'string' ? occ : `Participant #${occ}`,
-          registrationId: null,
-          stageName: null,
-          gender: null
-        };
-      });
-  };
-
-  // Calculer les statistiques des lits
+  // Calculer les statistiques des lits (avec filtrage par dates)
   const totalBeds = bungalows.reduce((sum, b) => sum + b.capacity, 0);
   const occupiedBeds = bungalows.reduce((sum, b) => {
-    const occupants = b.beds?.filter(bed => bed.occupiedBy !== null).length || 0;
+    const occupants = getBungalowOccupants(b).length;
     return sum + occupants;
   }, 0);
   const availableBeds = totalBeds - occupiedBeds;
   const occupiedBungalows = bungalows.filter(b => {
-    const occupants = b.beds?.filter(bed => bed.occupiedBy !== null).length || 0;
+    const occupants = getBungalowOccupants(b).length;
     return occupants > 0;
   }).length;
   const totalBungalows = bungalows.length;
@@ -251,37 +295,106 @@ const Villages: React.FC = () => {
               </h4>
               {occupants.map((occupant, idx) => (
                 <div key={idx} style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.5rem',
-                  padding: '0.5rem',
-                  marginBottom: '0.3rem',
+                  padding: '0.75rem',
+                  marginBottom: '0.5rem',
                   backgroundColor: 'white',
-                  borderRadius: '4px',
-                  fontSize: '0.85rem',
-                  border: '1px solid #E5E7EB'
+                  borderRadius: '8px',
+                  border: '1px solid #E5E7EB',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
                 }}>
-                  <i className={`fas fa-${occupant.gender === 'M' ? 'male' : 'female'}`}
-                     style={{color: occupant.gender === 'M' ? '#3B82F6' : '#EC4899'}}></i>
-                  <div style={{flex: 1}}>
-                    <div style={{fontWeight: '500'}}>
-                      {occupant.participantName}
-                    </div>
-                    {occupant.stageName && (
-                      <div style={{fontSize: '0.75rem', color: '#6B7280'}}>
-                        {occupant.stageName}
+                  {/* Header avec nom et genre */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    marginBottom: '0.5rem',
+                    paddingBottom: '0.5rem',
+                    borderBottom: '1px solid #F3F4F6'
+                  }}>
+                    <i className={`fas fa-${occupant.gender === 'M' ? 'male' : 'female'}`}
+                       style={{
+                         color: occupant.gender === 'M' ? '#3B82F6' : '#EC4899',
+                         fontSize: '1.1rem'
+                       }}></i>
+                    <div style={{flex: 1}}>
+                      <div style={{fontWeight: '600', fontSize: '0.9rem', color: '#1F2937'}}>
+                        {occupant.participantName}
                       </div>
+                      {occupant.role && (
+                        <div style={{
+                          display: 'inline-block',
+                          fontSize: '0.7rem',
+                          color: '#6B7280',
+                          backgroundColor: '#F3F4F6',
+                          padding: '2px 6px',
+                          borderRadius: '3px',
+                          marginTop: '2px'
+                        }}>
+                          {occupant.role === 'instructor' ? 'Encadrant' :
+                           occupant.role === 'musician' ? 'Musicien' :
+                           occupant.role === 'staff' ? 'Staff' : 'Participant'}
+                        </div>
+                      )}
+                    </div>
+                    <span style={{
+                      fontSize: '0.75rem',
+                      color: '#9CA3AF',
+                      backgroundColor: '#F3F4F6',
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      fontWeight: '500'
+                    }}>
+                      {occupant.bedId}
+                    </span>
+                  </div>
+
+                  {/* Détails du participant */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'auto 1fr',
+                    gap: '0.4rem',
+                    fontSize: '0.75rem'
+                  }}>
+                    {occupant.age && (
+                      <>
+                        <div style={{color: '#6B7280', fontWeight: '500'}}>
+                          <i className="fas fa-birthday-cake" style={{marginRight: '4px', width: '14px'}}></i>
+                          Âge:
+                        </div>
+                        <div style={{color: '#374151'}}>{occupant.age} ans</div>
+                      </>
+                    )}
+
+                    {occupant.nationality && (
+                      <>
+                        <div style={{color: '#6B7280', fontWeight: '500'}}>
+                          <i className="fas fa-flag" style={{marginRight: '4px', width: '14px'}}></i>
+                          Pays:
+                        </div>
+                        <div style={{color: '#374151'}}>{occupant.nationality}</div>
+                      </>
+                    )}
+
+                    {occupant.languages && occupant.languages.length > 0 && (
+                      <>
+                        <div style={{color: '#6B7280', fontWeight: '500'}}>
+                          <i className="fas fa-language" style={{marginRight: '4px', width: '14px'}}></i>
+                          Langues:
+                        </div>
+                        <div style={{color: '#374151'}}>{occupant.languages.join(', ')}</div>
+                      </>
+                    )}
+
+                    {occupant.stageName && (
+                      <>
+                        <div style={{color: '#6B7280', fontWeight: '500'}}>
+                          <i className="fas fa-calendar-alt" style={{marginRight: '4px', width: '14px'}}></i>
+                          Événement:
+                        </div>
+                        <div style={{color: '#374151', fontWeight: '500'}}>{occupant.stageName}</div>
+                      </>
                     )}
                   </div>
-                  <span style={{
-                    fontSize: '0.75rem',
-                    color: '#9CA3AF',
-                    backgroundColor: '#F3F4F6',
-                    padding: '2px 6px',
-                    borderRadius: '3px'
-                  }}>
-                    {occupant.bedId}
-                  </span>
                 </div>
               ))}
             </div>
